@@ -87,6 +87,17 @@ def _short_label(institution: str | None, account_type: str) -> str:
     return f"{name} {kind}"
 
 
+def _locked_label(institution: str | None, pending: int) -> str:
+    """Label for statements locked before we know whose account they are.
+
+    Without an institution there is nothing truthful to name, so it says what
+    the user can act on instead of inventing a bank.
+    """
+    if institution and institution != Institution.UNKNOWN.value:
+        return _INSTITUTION_SHORT[Institution(institution)]
+    return "locked" if pending == 1 else f"{pending} locked"
+
+
 def _rupees(paise: int) -> str:
     """Indian grouping, whole rupees. `Decimal` only to render (§8.2)."""
     whole = abs(paise) // 100
@@ -261,14 +272,39 @@ async def get_report(
         .all()
     ]
 
+    # A locked document usually has NO account: the account is not known until
+    # the PDF opens. Keying the banner on accounts alone means someone with
+    # twenty password-protected statements is told we found nothing and given
+    # nothing to click, which is exactly when the banner matters most.
     locked = [
-        LockedAccount(id=str(r["id"]), label=_short_label(r["institution"], r["type"]))
+        LockedAccount(
+            id=str(r["id"]),
+            label=(
+                _short_label(r["institution"], r["type"])
+                if r["type"]
+                else _locked_label(r["institution"], int(r["pending"]))
+            ),
+        )
         for r in (
             await session.execute(
                 text(
-                    "SELECT a.id, a.institution::text AS institution, a.type::text AS type "
-                    "FROM accounts a WHERE EXISTS ("
-                    "  SELECT 1 FROM documents d WHERE d.account_id = a.id AND d.status='locked')"
+                    """
+                    SELECT a.id,
+                           a.institution::text AS institution,
+                           a.type::text        AS type,
+                           1                   AS pending
+                    FROM accounts a
+                    WHERE EXISTS (SELECT 1 FROM documents d
+                                  WHERE d.account_id = a.id AND d.status = 'locked')
+                    UNION ALL
+                    SELECT DISTINCT ON (d.institution)
+                           d.id,
+                           d.institution::text AS institution,
+                           NULL                AS type,
+                           count(*) OVER (PARTITION BY d.institution) AS pending
+                    FROM documents d
+                    WHERE d.status = 'locked' AND d.account_id IS NULL
+                    """
                 )
             )
         )

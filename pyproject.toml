@@ -79,7 +79,7 @@ select = [
 
 # The web app renders an en dash in the window label ("Apr – Sep"); it is a
 # deliberate typographic choice, not a confusable typo.
-allowed-confusables = ["–"]
+allowed-confusables = ["–", "−", "×"]  # en dash, minus sign, times
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/*" = ["T20"]

@@ -96,6 +96,17 @@
             "title": "Createdat",
             "type": "string"
           },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
           "filename": {
             "title": "Filename",
             "type": "string"
@@ -125,6 +136,7 @@
           "filename",
           "status",
           "institution",
+          "error",
           "createdAt"
         ],
         "title": "DocumentOut",
@@ -1014,6 +1026,7 @@
         ]
       },
       "post": {
+        "description": "Store each PDF, then parse it.\n\nCounts answer the three things the web app distinguishes: accepted,\nwaiting on a password, and already seen. A duplicate is identified by\ncontent hash, so the same statement forwarded twice is one document.",
         "operationId": "upload_documents_v1_documents_post",
         "requestBody": {
           "content": {

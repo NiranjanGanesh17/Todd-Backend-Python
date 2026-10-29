@@ -7,6 +7,7 @@ is a hard client failure — these tests are what stop that reaching the browser
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import AsyncIterator
 
 import pytest
@@ -24,10 +25,27 @@ async def client(settings: Settings) -> AsyncIterator[AsyncClient]:
     test_settings = settings.model_copy(update={"auth_dev_bypass": True})
     app = create_app(test_settings)
     init_engine(test_settings)
+    await _reset_dev_user(test_settings)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
     await dispose_engine()
+
+
+async def _reset_dev_user(settings: Settings) -> None:
+    """Start every API test from an empty tenant.
+
+    Uploads are content-addressed, so without this the second run of the suite
+    sees its own first run's documents as duplicates.
+    """
+    from sqlalchemy import text
+    from todd.db.session import get_sessionmaker
+
+    async with get_sessionmaker()() as session, session.begin():
+        await session.execute(
+            text("DELETE FROM users WHERE id = :id"),
+            {"id": uuid.UUID(settings.auth_dev_user_id)},
+        )
 
 
 async def test_healthz_is_liveness_only(client: AsyncClient) -> None:
@@ -153,3 +171,63 @@ async def test_openapi_matches_the_node_operation_set(client: AsyncClient) -> No
     ours = operations((await client.get("/openapi.json")).json())
     theirs = operations(json.loads(node_path.read_text()))
     assert ours == theirs, f"drift: only-ours={ours - theirs} only-theirs={theirs - ours}"
+
+
+# ------------------------------------------------------------- the pipeline
+
+
+async def test_upload_rejects_a_request_with_no_file(client: AsyncClient) -> None:
+    assert (await client.post("/v1/documents")).status_code == 422
+
+
+async def test_a_non_pdf_upload_fails_rather_than_being_accepted(
+    client: AsyncClient,
+) -> None:
+    """Accepting bytes we cannot parse leaves the user watching a queue that
+    never drains, so the document is recorded as failed, not queued."""
+    response = await client.post(
+        "/v1/documents", files={"files": ("notes.pdf", b"hello, not a pdf", "application/pdf")}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {"accepted": 1, "locked": 0, "duplicates": 0}
+
+    listed = (await client.get("/v1/documents")).json()
+    mine = next(d for d in listed if d["filename"] == "notes.pdf")
+    assert mine["status"] == "failed"
+    assert mine["error"]
+
+
+async def test_the_same_bytes_twice_are_one_document(client: AsyncClient) -> None:
+    """Rule 3 of the design: every stage is idempotent."""
+    payload = {"files": ("dupe.pdf", b"not a pdf either", "application/pdf")}
+    first = (await client.post("/v1/documents", files=payload)).json()
+    second = (await client.post("/v1/documents", files=payload)).json()
+    assert first["duplicates"] == 0
+    assert second == {"accepted": 0, "locked": 0, "duplicates": 1}
+
+
+async def test_unlock_with_nothing_locked_is_not_an_error(client: AsyncClient) -> None:
+    response = await client.post(
+        "/v1/unlock",
+        json={
+            "accountId": "00000000-0000-4000-8000-000000000001",
+            "password": "whatever",
+            "remember": False,
+        },
+    )
+    assert response.status_code == 200
+    assert set(response.json()) == {"unlocked", "stillLocked"}
+
+
+async def test_unlock_rejects_an_empty_password(client: AsyncClient) -> None:
+    response = await client.post(
+        "/v1/unlock",
+        json={
+            "accountId": "00000000-0000-4000-8000-000000000001",
+            "password": "",
+            "remember": False,
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_failed"

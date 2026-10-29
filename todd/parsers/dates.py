@@ -8,6 +8,7 @@ lands in the wrong month.
 from __future__ import annotations
 
 import datetime as dt
+import re
 from zoneinfo import ZoneInfo
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -75,3 +76,77 @@ def month_bounds(key: str) -> tuple[dt.date, dt.date]:
     next_year, next_month = _shift_month(year, month, 1)
     end = dt.date(next_year, next_month, 1) - dt.timedelta(days=1)
     return start, end
+
+
+# --------------------------------------------------------------- statement dates
+
+#: Day-first, always: every Indian bank statement prints DD before MM.
+#:
+#: The year is matched at an exact width, longest first, rather than with
+#: `\d{2,4}`. A greedy year group reads ICICI's `07-04-261012` as the year
+#: 2610 and rejects the row (§8.19); trying 4 digits and then 2 reads it as
+#: 2026 with `1012` left over as the trailing time.
+_NUMERIC_DATES = [
+    re.compile(r"^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})"),
+    re.compile(r"^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})"),
+]
+_NAMED_DATES = [
+    re.compile(r"^(\d{1,2})[-/. ]([A-Za-z]{3,9})[-/. ](\d{4})"),
+    re.compile(r"^(\d{1,2})[-/. ]([A-Za-z]{3,9})[-/. ](\d{2})"),
+]
+
+_MONTHS: dict[str, int] = {m.lower(): i + 1 for i, m in enumerate(MONTH_ABBR)}
+_MONTHS.update(
+    {
+        "january": 1, "february": 2, "march": 3, "april": 4, "june": 6, "july": 7,
+        "august": 8, "september": 9, "sept": 9, "october": 10, "november": 11, "december": 12,
+    }
+)  # fmt: skip
+
+
+def parse_statement_date(text: str | None, *, century: int = 2000) -> dt.date | None:
+    """A date at the *start* of the text, or None.
+
+    §8.19 — ICICI prints an ATM transaction's date glued to its time:
+    `07-04-26` + `1012` arrives as `07-04-261012`. A strict full-string match
+    rejects it, the row then fails the "begins with a date" test, and the whole
+    transaction is absorbed into its neighbour as narration. Two of six ICICI
+    statements failed the balance chain for this reason alone.
+
+    So this matches a *prefix*. The cost is accepting a little trailing junk;
+    the benefit is not silently losing transactions.
+    """
+    if not text:
+        return None
+    token = text.strip().strip(",")
+
+    for pattern in (*_NUMERIC_DATES, *_NAMED_DATES):
+        match = pattern.match(token)
+        if not match:
+            continue
+        day_raw, month_raw, year_raw = match.groups()
+
+        month = _MONTHS.get(month_raw.lower()) if month_raw[0].isalpha() else int(month_raw)
+        if month is None or not 1 <= month <= 12:
+            continue
+
+        day = int(day_raw)
+        if not 1 <= day <= 31:
+            continue
+
+        year = int(year_raw)
+        if year < 100:
+            year += century
+        # A statement from 1970 or 2300 is a misread, not a date.
+        if not 1990 <= year <= 2100:
+            continue
+
+        try:
+            return dt.date(year, month, day)
+        except ValueError:
+            continue  # 31 February and friends
+    return None
+
+
+def looks_like_statement_date(text: str | None) -> bool:
+    return parse_statement_date(text) is not None
