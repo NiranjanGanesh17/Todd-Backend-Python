@@ -1,0 +1,109 @@
+[project]
+name = "todd-backend"
+version = "0.1.0"
+description = "Todd — Gmail bank statements into one combined spend report"
+requires-python = ">=3.12"
+
+dependencies = [
+    # web
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "python-multipart>=0.0.12",
+    "slowapi>=0.1.9",
+    # data
+    "sqlalchemy>=2.0",
+    "alembic>=1.14",
+    "psycopg[binary]>=3.2",
+    # ops
+    "structlog>=24.4",
+    "httpx>=0.27",
+    # crypto / auth
+    "pynacl>=1.5",
+    "pyjwt>=2.9",
+    # integrations
+    "google-api-python-client>=2.149",
+    "google-auth>=2.35",
+    "google-auth-oauthlib>=1.2",
+    "supabase>=2.9",
+    # llm
+    "langchain-anthropic>=0.3",
+    "langchain-core>=0.3",
+    "langgraph>=0.2",
+    # pdf
+    "pdfplumber>=0.11",
+    "pypdf>=5.1",
+    # queue
+    "arq>=0.26",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "mypy>=1.13",
+    "ruff>=0.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["todd"]
+
+# ---------------------------------------------------------------- ruff
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["todd", "tests", "scripts", "tools"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "A",         # builtins shadowing
+    "C4",        # comprehensions
+    "DTZ",       # naive datetimes — IST handling matters here
+    "T20",       # no print()
+    "SIM",
+    "RUF",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["T20"]
+"tools/*" = ["T20"]
+"tests/*" = ["S101"]
+
+# ---------------------------------------------------------------- mypy
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = [
+    "pdfplumber.*",
+    "slowapi.*",
+    "googleapiclient.*",
+    "google_auth_oauthlib.*",
+    "supabase.*",
+    "nacl.*",
+]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------- pytest
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q --strict-markers"

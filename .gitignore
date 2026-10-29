@@ -1,0 +1,30 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+
+# tooling
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# env — never commit real values
+.env
+.env.*
+!.env.example
+
+# local data — never commit customer data
+*.pdf
+!tests/fixtures/**/*.pdf
+local_storage/
+tmp/
+.DS_Store
+
+# editors
+.idea/
+.vscode/
