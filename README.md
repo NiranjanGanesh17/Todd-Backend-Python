@@ -28,11 +28,28 @@ cp .env.example .env    # then fill it in
 ## Commands
 
 ```sh
-uv run uvicorn todd.api.main:app --reload --port 8080
+uv run uvicorn todd.api.main:app --reload --port 4000   # the web app points here
+uv run alembic upgrade head                             # schema, RLS, views
+uv run python scripts/export_openapi.py                 # regenerate openapi.json
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
 uv run mypy todd
 ```
+
+### Local infrastructure
+
+Postgres and Redis come from the Node repo's compose file; this service uses a
+separate database on the same instance so Alembic and drizzle never collide.
+
+```sh
+docker compose -f ../Todd-Backend/infra/docker-compose.yml up -d
+docker exec todd-postgres createdb -U todd todd_py
+```
+
+### Running against the web app
+
+`Todd-Frontend` expects the API on **port 4000** with `NEXT_PUBLIC_USE_MOCKS=false`.
+Stop the Node service first — the two cannot share the port.
 
 ## Layout
 
@@ -57,8 +74,8 @@ Each step leaves something working and testable.
 | # | Step | Status |
 |---|---|---|
 | 0 | Project skeleton, tooling | done |
-| 1 | Config + logging + health routes | |
-| 2 | Database + RLS + the cross-tenant test | |
+| 1 | Config + logging + health routes | done |
+| 2 | Database + RLS + the cross-tenant test | done |
 | 3 | `schemas/` — enums, primitives, money, dates | |
 | 4 | Table extractor | |
 | 5 | Reconcile + dedupe | |
@@ -66,10 +83,26 @@ Each step leaves something working and testable.
 | 7 | Crypto + storage | |
 | 8 | Gmail ingest | |
 | 9 | LLM fallback | |
-| 10 | API routes, then diff `openapi.json` against the Node one | |
+| 10 | API routes, then diff `openapi.json` against the Node one | read routes done; writes are 501 |
 | 11 | Enrich agent | |
 
 Steps 1–7 need no API keys and no network.
+
+## What answers today
+
+| Route | |
+|---|---|
+| `GET /healthz`, `GET /readyz` | liveness; readiness probes Postgres and Redis |
+| `GET /v1/report` | the Home screen, from the `security_invoker` views |
+| `GET /v1/profile` | plan, accounts, Gmail connection |
+| `GET /v1/goals` | locked Pro tab, reads `GOALS_ENABLED` / `PRO_LOCK_MODE` |
+| `GET /v1/gmail/status` | connection plus backfill progress |
+| `GET /v1/documents` | stored statements and their status |
+
+The reads are real queries; with no statements ingested they correctly report
+an empty system. The writes — upload, unlock, Gmail OAuth — answer `501` with
+the standard error envelope until steps 6 to 8 land, rather than accepting a
+PDF into a queue that cannot drain.
 
 ## Non-negotiable
 

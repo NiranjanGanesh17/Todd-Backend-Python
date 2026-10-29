@@ -1,0 +1,1363 @@
+{
+  "components": {
+    "schemas": {
+      "AccountStatus": {
+        "description": "Drives the row's action on Profile: nothing, Unlock, or Upload.",
+        "enum": [
+          "up_to_date",
+          "needs_password",
+          "missing_months"
+        ],
+        "title": "AccountStatus",
+        "type": "string"
+      },
+      "AccountType": {
+        "enum": [
+          "savings",
+          "credit_card",
+          "loan"
+        ],
+        "title": "AccountType",
+        "type": "string"
+      },
+      "BiggestMonth": {
+        "properties": {
+          "caption": {
+            "title": "Caption",
+            "type": "string"
+          },
+          "month": {
+            "title": "Month",
+            "type": "string"
+          }
+        },
+        "required": [
+          "month",
+          "caption"
+        ],
+        "title": "BiggestMonth",
+        "type": "object"
+      },
+      "Body_upload_documents_v1_documents_post": {
+        "properties": {
+          "files": {
+            "items": {
+              "contentMediaType": "application/octet-stream",
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "array"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "Body_upload_documents_v1_documents_post",
+        "type": "object"
+      },
+      "CategoryTotal": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "totalPaise": {
+            "title": "Totalpaise",
+            "type": "integer"
+          },
+          "trendPct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trendpct"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "totalPaise",
+          "trendPct"
+        ],
+        "title": "CategoryTotal",
+        "type": "object"
+      },
+      "DocumentOut": {
+        "properties": {
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "institution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Institution"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "status",
+          "institution",
+          "createdAt"
+        ],
+        "title": "DocumentOut",
+        "type": "object"
+      },
+      "EmailConnectionStatus": {
+        "enum": [
+          "active",
+          "revoked",
+          "error"
+        ],
+        "title": "EmailConnectionStatus",
+        "type": "string"
+      },
+      "GmailBackfill": {
+        "properties": {
+          "alertsFound": {
+            "title": "Alertsfound",
+            "type": "integer"
+          },
+          "finishedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finishedat"
+          },
+          "messagesFound": {
+            "title": "Messagesfound",
+            "type": "integer"
+          },
+          "messagesProcessed": {
+            "title": "Messagesprocessed",
+            "type": "integer"
+          },
+          "startedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startedat"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "running",
+              "done",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "statementsFound": {
+            "title": "Statementsfound",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "state",
+          "messagesFound",
+          "messagesProcessed",
+          "statementsFound",
+          "alertsFound",
+          "startedAt",
+          "finishedAt"
+        ],
+        "title": "GmailBackfill",
+        "type": "object"
+      },
+      "GmailConnectResponse": {
+        "properties": {
+          "authUrl": {
+            "title": "Authurl",
+            "type": "string"
+          }
+        },
+        "required": [
+          "authUrl"
+        ],
+        "title": "GmailConnectResponse",
+        "type": "object"
+      },
+      "GmailConnection": {
+        "properties": {
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "googleEmail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Googleemail"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lastSyncedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastsyncedat"
+          },
+          "provider": {
+            "const": "gmail",
+            "default": "gmail",
+            "title": "Provider",
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/EmailConnectionStatus"
+          },
+          "watchExpiresAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watchexpiresat"
+          }
+        },
+        "required": [
+          "id",
+          "googleEmail",
+          "status",
+          "scopes",
+          "lastSyncedAt",
+          "watchExpiresAt",
+          "createdAt"
+        ],
+        "title": "GmailConnection",
+        "type": "object"
+      },
+      "GmailStatusResponse": {
+        "properties": {
+          "backfill": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GmailBackfill"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "connection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GmailConnection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "connection",
+          "backfill"
+        ],
+        "title": "GmailStatusResponse",
+        "type": "object"
+      },
+      "GmailSummary": {
+        "properties": {
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          }
+        },
+        "required": [
+          "connected",
+          "email"
+        ],
+        "title": "GmailSummary",
+        "type": "object"
+      },
+      "GoalTeaser": {
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "body"
+        ],
+        "title": "GoalTeaser",
+        "type": "object"
+      },
+      "GoalsLockedResponse": {
+        "properties": {
+          "locked": {
+            "const": true,
+            "default": true,
+            "title": "Locked",
+            "type": "boolean"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/LockMode"
+          },
+          "onWaitlist": {
+            "title": "Onwaitlist",
+            "type": "boolean"
+          },
+          "priceInr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priceinr"
+          },
+          "teasers": {
+            "items": {
+              "$ref": "#/components/schemas/GoalTeaser"
+            },
+            "title": "Teasers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "mode",
+          "priceInr",
+          "teasers",
+          "onWaitlist"
+        ],
+        "title": "GoalsLockedResponse",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthChecks": {
+        "properties": {
+          "database": {
+            "enum": [
+              "ok",
+              "down",
+              "skipped"
+            ],
+            "title": "Database",
+            "type": "string"
+          },
+          "redis": {
+            "enum": [
+              "ok",
+              "down",
+              "skipped"
+            ],
+            "title": "Redis",
+            "type": "string"
+          }
+        },
+        "required": [
+          "database",
+          "redis"
+        ],
+        "title": "HealthChecks",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "properties": {
+          "checks": {
+            "$ref": "#/components/schemas/HealthChecks"
+          },
+          "service": {
+            "title": "Service",
+            "type": "string"
+          },
+          "status": {
+            "const": "ok",
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "uptimeSeconds": {
+            "title": "Uptimeseconds",
+            "type": "number"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service",
+          "version",
+          "uptimeSeconds",
+          "checks"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "InsightOut": {
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "period": {
+            "default": "",
+            "title": "Period",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InsightStatus"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "title",
+          "body",
+          "status"
+        ],
+        "title": "InsightOut",
+        "type": "object"
+      },
+      "InsightStatus": {
+        "enum": [
+          "new",
+          "seen",
+          "dismissed"
+        ],
+        "title": "InsightStatus",
+        "type": "string"
+      },
+      "LockMode": {
+        "enum": [
+          "upgrade",
+          "waitlist"
+        ],
+        "title": "LockMode",
+        "type": "string"
+      },
+      "LockedAccount": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "LockedAccount",
+        "type": "object"
+      },
+      "MonthlySpend": {
+        "properties": {
+          "month": {
+            "title": "Month",
+            "type": "string"
+          },
+          "totalPaise": {
+            "title": "Totalpaise",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "month",
+          "totalPaise"
+        ],
+        "title": "MonthlySpend",
+        "type": "object"
+      },
+      "Plan": {
+        "enum": [
+          "free",
+          "pro"
+        ],
+        "title": "Plan",
+        "type": "string"
+      },
+      "ProfileAccount": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "institution": {
+            "title": "Institution",
+            "type": "string"
+          },
+          "maskedNumber": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maskednumber"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AccountStatus"
+          },
+          "statusLabel": {
+            "title": "Statuslabel",
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/AccountType"
+          }
+        },
+        "required": [
+          "id",
+          "institution",
+          "type",
+          "maskedNumber",
+          "status",
+          "statusLabel"
+        ],
+        "title": "ProfileAccount",
+        "type": "object"
+      },
+      "ProfileResponse": {
+        "properties": {
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileAccount"
+            },
+            "title": "Accounts",
+            "type": "array"
+          },
+          "displayName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Displayname"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "gmail": {
+            "$ref": "#/components/schemas/GmailSummary"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/Plan"
+          }
+        },
+        "required": [
+          "displayName",
+          "email",
+          "plan",
+          "accounts",
+          "gmail"
+        ],
+        "title": "ProfileResponse",
+        "type": "object"
+      },
+      "ReportResponse": {
+        "properties": {
+          "availableWindows": {
+            "items": {
+              "enum": [
+                1,
+                3,
+                6,
+                12
+              ],
+              "type": "integer"
+            },
+            "title": "Availablewindows",
+            "type": "array"
+          },
+          "biggestMonth": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BiggestMonth"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/CategoryTotal"
+            },
+            "title": "Categories",
+            "type": "array"
+          },
+          "displayName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Displayname"
+          },
+          "hasData": {
+            "title": "Hasdata",
+            "type": "boolean"
+          },
+          "lockedAccounts": {
+            "items": {
+              "$ref": "#/components/schemas/LockedAccount"
+            },
+            "title": "Lockedaccounts",
+            "type": "array"
+          },
+          "monthlySpend": {
+            "items": {
+              "$ref": "#/components/schemas/MonthlySpend"
+            },
+            "title": "Monthlyspend",
+            "type": "array"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/ReportTotals"
+          },
+          "window": {
+            "$ref": "#/components/schemas/ReportWindow"
+          },
+          "worthALook": {
+            "items": {
+              "$ref": "#/components/schemas/InsightOut"
+            },
+            "title": "Worthalook",
+            "type": "array"
+          }
+        },
+        "required": [
+          "displayName",
+          "hasData",
+          "window",
+          "availableWindows",
+          "lockedAccounts",
+          "totals",
+          "monthlySpend",
+          "biggestMonth",
+          "categories",
+          "worthALook"
+        ],
+        "title": "ReportResponse",
+        "type": "object"
+      },
+      "ReportTotals": {
+        "properties": {
+          "moneyInPaise": {
+            "title": "Moneyinpaise",
+            "type": "integer"
+          },
+          "savedPctOfIncome": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Savedpctofincome"
+          },
+          "spentPaise": {
+            "title": "Spentpaise",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "spentPaise",
+          "moneyInPaise",
+          "savedPctOfIncome"
+        ],
+        "title": "ReportTotals",
+        "type": "object"
+      },
+      "ReportWindow": {
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "monthCount": {
+            "enum": [
+              1,
+              3,
+              6,
+              12
+            ],
+            "title": "Monthcount",
+            "type": "integer"
+          },
+          "months": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Months",
+            "type": "array"
+          }
+        },
+        "required": [
+          "months",
+          "label",
+          "monthCount"
+        ],
+        "title": "ReportWindow",
+        "type": "object"
+      },
+      "UnlockRequest": {
+        "properties": {
+          "accountId": {
+            "title": "Accountid",
+            "type": "string"
+          },
+          "password": {
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          },
+          "remember": {
+            "default": false,
+            "title": "Remember",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "accountId",
+          "password"
+        ],
+        "title": "UnlockRequest",
+        "type": "object"
+      },
+      "UnlockResponse": {
+        "properties": {
+          "stillLocked": {
+            "title": "Stilllocked",
+            "type": "integer"
+          },
+          "unlocked": {
+            "title": "Unlocked",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unlocked",
+          "stillLocked"
+        ],
+        "title": "UnlockResponse",
+        "type": "object"
+      },
+      "UploadResponse": {
+        "properties": {
+          "accepted": {
+            "title": "Accepted",
+            "type": "integer"
+          },
+          "duplicates": {
+            "title": "Duplicates",
+            "type": "integer"
+          },
+          "locked": {
+            "title": "Locked",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "accepted",
+          "locked",
+          "duplicates"
+        ],
+        "title": "UploadResponse",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "WaitlistResponse": {
+        "properties": {
+          "onWaitlist": {
+            "const": true,
+            "default": true,
+            "title": "Onwaitlist",
+            "type": "boolean"
+          }
+        },
+        "title": "WaitlistResponse",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "summary": "Bank statements in Gmail, turned into one combined spend report.",
+    "title": "Todd API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/healthz": {
+      "get": {
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Liveness",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "readyz_readyz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Readiness",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/v1/documents": {
+      "get": {
+        "operationId": "list_documents_v1_documents_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DocumentOut"
+                  },
+                  "title": "Response List Documents V1 Documents Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Stored statements",
+        "tags": [
+          "documents"
+        ]
+      },
+      "post": {
+        "operationId": "upload_documents_v1_documents_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_documents_v1_documents_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload statement PDFs",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/v1/documents/{documentId}/unlock": {
+      "post": {
+        "operationId": "unlock_document_v1_documents__documentId__unlock_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "documentId",
+            "required": true,
+            "schema": {
+              "title": "Documentid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnlockRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnlockResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Password for one locked PDF",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/v1/gmail": {
+      "delete": {
+        "operationId": "gmail_disconnect_v1_gmail_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Disconnect, revoke token, stop watch",
+        "tags": [
+          "gmail"
+        ]
+      }
+    },
+    "/v1/gmail/callback": {
+      "get": {
+        "operationId": "gmail_callback_v1_gmail_callback_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "OAuth redirect target",
+        "tags": [
+          "gmail"
+        ]
+      }
+    },
+    "/v1/gmail/status": {
+      "get": {
+        "operationId": "gmail_status_v1_gmail_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GmailStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Connection plus live backfill progress",
+        "tags": [
+          "gmail"
+        ]
+      }
+    },
+    "/v1/gmail/sync": {
+      "post": {
+        "operationId": "gmail_sync_v1_gmail_sync_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Catch-up sync",
+        "tags": [
+          "gmail"
+        ]
+      }
+    },
+    "/v1/goals": {
+      "get": {
+        "operationId": "get_goals_v1_goals_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalsLockedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Locked Pro tab with teasers",
+        "tags": [
+          "goals"
+        ]
+      }
+    },
+    "/v1/goals/waitlist": {
+      "post": {
+        "operationId": "join_waitlist_v1_goals_waitlist_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaitlistResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Join the Pro waitlist",
+        "tags": [
+          "goals"
+        ]
+      }
+    },
+    "/v1/profile": {
+      "get": {
+        "operationId": "get_profile_v1_profile_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Plan, accounts and their status",
+        "tags": [
+          "screens"
+        ]
+      }
+    },
+    "/v1/report": {
+      "get": {
+        "operationId": "get_report_v1_report_get",
+        "parameters": [
+          {
+            "description": "1, 3, 6 or 12. Omit for the saved one.",
+            "in": "query",
+            "name": "months",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "1, 3, 6 or 12. Omit for the saved one.",
+              "title": "Months"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Home \u2014 the whole report",
+        "tags": [
+          "screens"
+        ]
+      }
+    },
+    "/v1/sources/gmail/connect": {
+      "post": {
+        "operationId": "gmail_connect_v1_sources_gmail_connect_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GmailConnectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Begin consent, returns {authUrl}",
+        "tags": [
+          "gmail"
+        ]
+      }
+    },
+    "/v1/unlock": {
+      "post": {
+        "operationId": "unlock_account_v1_unlock_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnlockRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnlockResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Password for a bank's statements",
+        "tags": [
+          "documents"
+        ]
+      }
+    }
+  }
+}

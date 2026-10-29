@@ -36,6 +36,7 @@ dependencies = [
     "pypdf>=5.1",
     # queue
     "arq>=0.26",
+    "redis>=5",
 ]
 
 [dependency-groups]
@@ -76,6 +77,10 @@ select = [
     "RUF",
 ]
 
+# The web app renders an en dash in the window label ("Apr – Sep"); it is a
+# deliberate typographic choice, not a confusable typo.
+allowed-confusables = ["–"]
+
 [tool.ruff.lint.per-file-ignores]
 "scripts/*" = ["T20"]
 "tools/*" = ["T20"]
@@ -97,6 +102,7 @@ module = [
     "google_auth_oauthlib.*",
     "supabase.*",
     "nacl.*",
+    "redis.*",
 ]
 ignore_missing_imports = true
 
