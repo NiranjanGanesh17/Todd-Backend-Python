@@ -8,6 +8,8 @@ lands in the wrong month.
 from __future__ import annotations
 
 import datetime as dt
+import re
+from itertools import pairwise
 from zoneinfo import ZoneInfo
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -50,6 +52,35 @@ def last_complete_months(count: int, *, today: dt.date | None = None) -> list[st
     return keys
 
 
+MONTH_NAME = (
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)  # fmt: skip
+
+
+def month_name(key: str) -> str:
+    """ "2026-08" -> "August". Written server-side so two clients cannot differ."""
+    return MONTH_NAME[int(key.split("-")[1]) - 1]
+
+
+def preceding_months(month_keys: list[str]) -> list[str]:
+    """The window of the same length immediately before `month_keys`.
+
+    This is what a trend compares against: Apr–Sep is judged against Oct–Mar,
+    never against "the same months last year". A window of equal length keeps
+    the comparison honest when the user switches from 3 months to 12.
+    """
+    if not month_keys:
+        return []
+    year, month = (int(part) for part in month_keys[0].split("-"))
+    count = len(month_keys)
+    keys: list[str] = []
+    for offset in range(count, 0, -1):
+        y, m = _shift_month(year, month, -offset)
+        keys.append(f"{y:04d}-{m:02d}")
+    return keys
+
+
 def window_label(month_keys: list[str]) -> str:
     """ "Apr – Sep", or "Apr 2025 – Mar 2026" when the window spans a year end.
 
@@ -68,6 +99,27 @@ def window_label(month_keys: list[str]) -> str:
     return f"{first} {first_year} – {last} {last_year}"
 
 
+def gap_label(month_keys: list[str]) -> str:
+    """The missing months, as Profile says them: "Jul", "Jul – Sep", "4 months".
+
+    A run of consecutive months is a range because that is how someone thinks
+    of it. Scattered months are counted instead: "Missing Apr, Jun, Sep and
+    Nov" is a sentence nobody finishes reading, and the action is the same.
+    """
+    if not month_keys:
+        return ""
+    ordered = sorted(month_keys)
+    names = [MONTH_ABBR[int(key.split("-")[1]) - 1] for key in ordered]
+    if len(ordered) == 1:
+        return names[0]
+
+    indexes = [int(k[:4]) * 12 + int(k[5:7]) for k in ordered]
+    consecutive = all(b - a == 1 for a, b in pairwise(indexes))
+    if consecutive:
+        return f"{names[0]} – {names[-1]}"
+    return f"{len(ordered)} months"
+
+
 def month_bounds(key: str) -> tuple[dt.date, dt.date]:
     """First and last day of a `YYYY-MM` key, inclusive."""
     year, month = (int(p) for p in key.split("-"))
@@ -75,3 +127,77 @@ def month_bounds(key: str) -> tuple[dt.date, dt.date]:
     next_year, next_month = _shift_month(year, month, 1)
     end = dt.date(next_year, next_month, 1) - dt.timedelta(days=1)
     return start, end
+
+
+# --------------------------------------------------------------- statement dates
+
+#: Day-first, always: every Indian bank statement prints DD before MM.
+#:
+#: The year is matched at an exact width, longest first, rather than with
+#: `\d{2,4}`. A greedy year group reads ICICI's `07-04-261012` as the year
+#: 2610 and rejects the row (§8.19); trying 4 digits and then 2 reads it as
+#: 2026 with `1012` left over as the trailing time.
+_NUMERIC_DATES = [
+    re.compile(r"^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})"),
+    re.compile(r"^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})"),
+]
+_NAMED_DATES = [
+    re.compile(r"^(\d{1,2})[-/. ]([A-Za-z]{3,9})[-/. ](\d{4})"),
+    re.compile(r"^(\d{1,2})[-/. ]([A-Za-z]{3,9})[-/. ](\d{2})"),
+]
+
+_MONTHS: dict[str, int] = {m.lower(): i + 1 for i, m in enumerate(MONTH_ABBR)}
+_MONTHS.update(
+    {
+        "january": 1, "february": 2, "march": 3, "april": 4, "june": 6, "july": 7,
+        "august": 8, "september": 9, "sept": 9, "october": 10, "november": 11, "december": 12,
+    }
+)  # fmt: skip
+
+
+def parse_statement_date(text: str | None, *, century: int = 2000) -> dt.date | None:
+    """A date at the *start* of the text, or None.
+
+    §8.19 — ICICI prints an ATM transaction's date glued to its time:
+    `07-04-26` + `1012` arrives as `07-04-261012`. A strict full-string match
+    rejects it, the row then fails the "begins with a date" test, and the whole
+    transaction is absorbed into its neighbour as narration. Two of six ICICI
+    statements failed the balance chain for this reason alone.
+
+    So this matches a *prefix*. The cost is accepting a little trailing junk;
+    the benefit is not silently losing transactions.
+    """
+    if not text:
+        return None
+    token = text.strip().strip(",")
+
+    for pattern in (*_NUMERIC_DATES, *_NAMED_DATES):
+        match = pattern.match(token)
+        if not match:
+            continue
+        day_raw, month_raw, year_raw = match.groups()
+
+        month = _MONTHS.get(month_raw.lower()) if month_raw[0].isalpha() else int(month_raw)
+        if month is None or not 1 <= month <= 12:
+            continue
+
+        day = int(day_raw)
+        if not 1 <= day <= 31:
+            continue
+
+        year = int(year_raw)
+        if year < 100:
+            year += century
+        # A statement from 1970 or 2300 is a misread, not a date.
+        if not 1990 <= year <= 2100:
+            continue
+
+        try:
+            return dt.date(year, month, day)
+        except ValueError:
+            continue  # 31 February and friends
+    return None
+
+
+def looks_like_statement_date(text: str | None) -> bool:
+    return parse_statement_date(text) is not None

@@ -55,6 +55,54 @@
         "title": "Body_upload_documents_v1_documents_post",
         "type": "object"
       },
+      "CategoriesResponse": {
+        "properties": {
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/CategoryOption"
+            },
+            "title": "Categories",
+            "type": "array"
+          }
+        },
+        "required": [
+          "categories"
+        ],
+        "title": "CategoriesResponse",
+        "type": "object"
+      },
+      "CategoryKind": {
+        "enum": [
+          "spend",
+          "income",
+          "transfer"
+        ],
+        "title": "CategoryKind",
+        "type": "string"
+      },
+      "CategoryOption": {
+        "description": "A category a transaction can be filed under.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/CategoryKind"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "kind"
+        ],
+        "title": "CategoryOption",
+        "type": "object"
+      },
       "CategoryTotal": {
         "properties": {
           "name": {
@@ -79,6 +127,11 @@
               }
             ],
             "title": "Trendpct"
+          },
+          "txnCount": {
+            "default": 0,
+            "title": "Txncount",
+            "type": "integer"
           }
         },
         "required": [
@@ -90,11 +143,70 @@
         "title": "CategoryTotal",
         "type": "object"
       },
+      "CategoryTransactionsResponse": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "totalPaise": {
+            "title": "Totalpaise",
+            "type": "integer"
+          },
+          "transactions": {
+            "items": {
+              "$ref": "#/components/schemas/TransactionOut"
+            },
+            "title": "Transactions",
+            "type": "array"
+          },
+          "window": {
+            "$ref": "#/components/schemas/ReportWindow"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "window",
+          "totalPaise",
+          "count",
+          "transactions"
+        ],
+        "title": "CategoryTransactionsResponse",
+        "type": "object"
+      },
+      "Direction": {
+        "enum": [
+          "debit",
+          "credit"
+        ],
+        "title": "Direction",
+        "type": "string"
+      },
       "DocumentOut": {
         "properties": {
           "createdAt": {
             "title": "Createdat",
             "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
           },
           "filename": {
             "title": "Filename",
@@ -125,6 +237,7 @@
           "filename",
           "status",
           "institution",
+          "error",
           "createdAt"
         ],
         "title": "DocumentOut",
@@ -138,6 +251,52 @@
         ],
         "title": "EmailConnectionStatus",
         "type": "string"
+      },
+      "FileTransactionRequest": {
+        "properties": {
+          "applyToFuture": {
+            "default": false,
+            "title": "Applytofuture",
+            "type": "boolean"
+          },
+          "categorySlug": {
+            "title": "Categoryslug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "categorySlug"
+        ],
+        "title": "FileTransactionRequest",
+        "type": "object"
+      },
+      "FileTransactionResponse": {
+        "properties": {
+          "affected": {
+            "title": "Affected",
+            "type": "integer"
+          },
+          "categoryName": {
+            "title": "Categoryname",
+            "type": "string"
+          },
+          "categorySlug": {
+            "title": "Categoryslug",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "categorySlug",
+          "categoryName",
+          "affected"
+        ],
+        "title": "FileTransactionResponse",
+        "type": "object"
       },
       "GmailBackfill": {
         "properties": {
@@ -482,6 +641,42 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "IncomeSource": {
+        "description": "One source of money arriving, for the \"Came in\" breakdown.\n\nSame shape as a spend category, because it is one \u2014 the credit side of\nthe same ledger, filtered the other way.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "totalPaise": {
+            "title": "Totalpaise",
+            "type": "integer"
+          },
+          "trendPct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trendpct"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "totalPaise",
+          "trendPct"
+        ],
+        "title": "IncomeSource",
+        "type": "object"
+      },
       "InsightOut": {
         "properties": {
           "body": {
@@ -716,6 +911,13 @@
             "title": "Hasdata",
             "type": "boolean"
           },
+          "incomeSources": {
+            "items": {
+              "$ref": "#/components/schemas/IncomeSource"
+            },
+            "title": "Incomesources",
+            "type": "array"
+          },
           "lockedAccounts": {
             "items": {
               "$ref": "#/components/schemas/LockedAccount"
@@ -752,6 +954,7 @@
           "lockedAccounts",
           "totals",
           "monthlySpend",
+          "incomeSources",
           "biggestMonth",
           "categories",
           "worthALook"
@@ -819,6 +1022,162 @@
           "monthCount"
         ],
         "title": "ReportWindow",
+        "type": "object"
+      },
+      "TransactionOut": {
+        "description": "One ledger row, as a category drill-down shows it.\n\n`merchantName` or `counterpartyName` is what a person reads;\n`rawDescription` is kept so they can see what the bank actually printed\nwhen a label looks wrong.",
+        "properties": {
+          "accountLabel": {
+            "title": "Accountlabel",
+            "type": "string"
+          },
+          "accountMasked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accountmasked"
+          },
+          "amountPaise": {
+            "title": "Amountpaise",
+            "type": "integer"
+          },
+          "categoryConfidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Categoryconfidence"
+          },
+          "categoryName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Categoryname"
+          },
+          "categorySlug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Categoryslug"
+          },
+          "categorySource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Categorysource"
+          },
+          "counterpartyName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counterpartyname"
+          },
+          "counterpartyVpa": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counterpartyvpa"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/Direction"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "isTransfer": {
+            "title": "Istransfer",
+            "type": "boolean"
+          },
+          "merchantName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merchantname"
+          },
+          "rail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rail"
+          },
+          "rawDescription": {
+            "title": "Rawdescription",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "txnDate": {
+            "title": "Txndate",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "txnDate",
+          "amountPaise",
+          "direction",
+          "rawDescription",
+          "title",
+          "rail",
+          "accountMasked",
+          "merchantName",
+          "counterpartyName",
+          "counterpartyVpa",
+          "categorySlug",
+          "categoryName",
+          "categorySource",
+          "categoryConfidence",
+          "isTransfer",
+          "accountLabel"
+        ],
+        "title": "TransactionOut",
         "type": "object"
       },
       "UnlockRequest": {
@@ -989,6 +1348,128 @@
         ]
       }
     },
+    "/v1/categories": {
+      "get": {
+        "description": "Every category a transaction can be moved into, in display order.",
+        "operationId": "list_categories_v1_categories_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CategoriesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Categories to file under",
+        "tags": [
+          "screens"
+        ]
+      }
+    },
+    "/v1/categories/{slug}/transactions": {
+      "get": {
+        "description": "Rows behind a bar on the report, for the window it was drawn for.\n\nReads `v_publishable_transactions`, so a statement that failed the\nreconciliation gate contributes nothing here either.\n\n`direction` picks which side of the ledger: `debit` mirrors\n`v_category_spend` exactly, `credit` mirrors the \"Came in\" breakdown. A\ndrill-down whose total differs from the bar that opened it is worse than\nno drill-down at all, so the filters have to match on both sides.",
+        "operationId": "category_transactions_v1_categories__slug__transactions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "description": "1, 3, 6 or 12.",
+            "in": "query",
+            "name": "months",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "1, 3, 6 or 12.",
+              "title": "Months"
+            }
+          },
+          {
+            "description": "debit for spend, credit for income",
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "default": "debit",
+              "description": "debit for spend, credit for income",
+              "enum": [
+                "debit",
+                "credit"
+              ],
+              "title": "Direction",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CategoryTransactionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The transactions behind one category bar",
+        "tags": [
+          "screens"
+        ]
+      }
+    },
     "/v1/documents": {
       "get": {
         "operationId": "list_documents_v1_documents_get",
@@ -1014,6 +1495,7 @@
         ]
       },
       "post": {
+        "description": "Store each PDF, then parse it.\n\nCounts answer the three things the web app distinguishes: accepted,\nwaiting on a password, and already seen. A duplicate is identified by\ncontent hash, so the same statement forwarded twice is one document.",
         "operationId": "upload_documents_v1_documents_post",
         "requestBody": {
           "content": {
@@ -1107,12 +1589,19 @@
     },
     "/v1/gmail": {
       "delete": {
+        "description": "Forget the connection and ask Google to revoke the grant.\n\nThe stored token is deleted whether or not the revoke call succeeds: a\ndisconnect the user asked for must not depend on Google being reachable.",
         "operationId": "gmail_disconnect_v1_gmail_delete",
         "responses": {
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Gmail Disconnect V1 Gmail Delete",
+                  "type": "object"
+                }
               }
             },
             "description": "Successful Response"
@@ -1126,7 +1615,40 @@
     },
     "/v1/gmail/callback": {
       "get": {
+        "description": "Google sends the browser here. Always redirect \u2014 never render JSON at a\nhuman.\n\nThis route deliberately does **not** depend on the authenticated session.\nA browser arriving from Google carries no bearer token, so requiring one\nwould make the callback 401 the moment `AUTH_DEV_BYPASS` is off. The\n`oauth_states` row is the credential: single use, short lived, and it names\nthe user. The session is opened unscoped to read that row, then scoped to\nthe user it names before anything is written.",
         "operationId": "gmail_callback_v1_gmail_callback_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "State",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "code",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Code",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "error",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Error",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -1135,6 +1657,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "OAuth redirect target",
@@ -1171,7 +1703,13 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Gmail Sync V1 Gmail Sync Post",
+                  "type": "object"
+                }
               }
             },
             "description": "Successful Response"
@@ -1299,6 +1837,7 @@
     },
     "/v1/sources/gmail/connect": {
       "post": {
+        "description": "Start consent. The web app POSTs this with **no body**, so no body model\nis declared here \u2014 one would make an empty POST a 422 (\u00a76).",
         "operationId": "gmail_connect_v1_sources_gmail_connect_post",
         "responses": {
           "200": {
@@ -1315,6 +1854,59 @@
         "summary": "Begin consent, returns {authUrl}",
         "tags": [
           "gmail"
+        ]
+      }
+    },
+    "/v1/transactions/{transaction_id}/category": {
+      "post": {
+        "description": "Move one transaction, and optionally every future one from the payee.\n\nA correction is the top of the ladder \u2014 confidence 1.0, `category_source`\nof `user_rule` \u2014 so no automatic rung and no model run can overwrite it.\nFiling under the same payee is what makes sorting compound rather than\nbeing busywork: one decision covers every month that follows.",
+        "operationId": "file_transaction_v1_transactions__transaction_id__category_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transaction_id",
+            "required": true,
+            "schema": {
+              "title": "Transaction Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileTransactionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileTransactionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "File a transaction under a category",
+        "tags": [
+          "screens"
         ]
       }
     },
