@@ -37,6 +37,7 @@ dependencies = [
     # queue
     "arq>=0.26",
     "redis>=5",
+    "anthropic>=2.3.0",
 ]
 
 [dependency-groups]
@@ -103,6 +104,10 @@ module = [
     "supabase.*",
     "nacl.*",
     "redis.*",
+    "anthropic.*",
+    "google.auth.*",
+    "google.oauth2.*",
+    "google_auth_oauthlib.*",
 ]
 ignore_missing_imports = true
 

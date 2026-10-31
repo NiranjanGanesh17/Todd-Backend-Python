@@ -22,8 +22,14 @@ AppEnv = Literal["development", "test", "production"]
 
 #: Used when ENCRYPTION_MASTER_KEY is unset outside production. It must be a
 #: constant: a per-process random key means a secret sealed by one process is
-#: unreadable by every other, which looks like data corruption.
-DEV_MASTER_KEY = "ZGV2LW9ubHktbWFzdGVyLWtleS0zMi1ieXRlcy1sb25nISE="
+#: unreadable by every other, which looks like data corruption (§8.16).
+#:
+#: It must also decode to exactly 32 bytes — SecretBox.KEY_SIZE. The first
+#: version of this constant decoded to 35, and because every crypto test built
+#: its own key with `generate_master_key()`, nothing caught it until a live
+#: OAuth callback tried to seal a refresh token. `test_crypto.py` now exercises
+#: this value directly.
+DEV_MASTER_KEY = "dG9kZC1kZXZlbG9wbWVudC1vbmx5LW1hc3Rlci1rZXk="
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +74,14 @@ class Settings(BaseSettings):
 
     # ---- anthropic
     anthropic_api_key: str | None = None
-    anthropic_model_fast: str | None = None
+    #: Rung 8 is a bulk classifier over short strings, so it runs on the fast
+    #: model. Statement extraction (§7.4) is the job for the smart one.
+    anthropic_model_fast: str | None = "claude-haiku-5-5"
     anthropic_model_smart: str | None = None
-    llm_daily_cost_cap_micros: int | None = None
+    llm_daily_cost_cap_micros: int | None = 50_000  # $0.05/user/day
+    #: §9 rung 8. Off by default: it is the only rung that spends money, and
+    #: it must not start doing so because a config file was copied.
+    llm_enrich_enabled: bool = False
 
     # ---- encryption
     encryption_master_key: str | None = None

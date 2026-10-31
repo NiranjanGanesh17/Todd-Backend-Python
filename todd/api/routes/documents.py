@@ -17,7 +17,7 @@ from todd.api.errors import ApiError
 from todd.log import get_logger
 from todd.schemas.api.base import ApiModel
 from todd.schemas.api.models import UnlockRequest, UnlockResponse, UploadResponse
-from todd.schemas.enums import DocumentStatus
+from todd.schemas.enums import DocumentStatus, Institution
 from todd.worker.agents.statement import process_document
 from todd.worker.lib.storage import build_storage, safe_filename, sha256_of, storage_key
 
@@ -147,6 +147,13 @@ async def upload_documents(
     return UploadResponse(accepted=accepted, locked=locked, duplicates=duplicates)
 
 
+def _institution(value: str | None) -> Institution:
+    try:
+        return Institution(value or "unknown")
+    except ValueError:
+        return Institution.UNKNOWN
+
+
 async def _unlock(
     session: SessionDep,
     user_id: str,
@@ -168,7 +175,10 @@ async def _unlock(
     rows = (
         (
             await session.execute(
-                text(f"SELECT id, storage_key FROM documents WHERE status = 'locked' {clause}"),
+                text(
+                    "SELECT id, storage_key, institution::text AS institution "
+                    f"FROM documents WHERE status = 'locked' {clause}"
+                ),
                 params,
             )
         )
@@ -195,6 +205,11 @@ async def _unlock(
             data=data,
             typed_password=body.password,
             remember_password=body.remember,
+            # What the document already knows. Dropping it here is how every
+            # unlocked statement used to land in one "unknown bank" account:
+            # the sender's bank was recorded at ingest and then thrown away at
+            # the one moment the file could finally be read.
+            institution=_institution(row["institution"]),
         )
         if result.status is DocumentStatus.LOCKED:
             still_locked += 1

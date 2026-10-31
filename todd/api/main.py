@@ -100,6 +100,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware, hsts=settings.is_production)
     app.middleware("http")(request_id_middleware)
 
+    # Routes resolve settings through `Depends(get_settings)`, which is cached
+    # globally. Without this override the `settings` argument would shape only
+    # logging and CORS while every route read the process-wide object — so a
+    # test could not build an app with different configuration, and would
+    # silently exercise whatever `.env` happened to contain.
+    app.dependency_overrides[get_settings] = lambda: settings
+
     install_error_handlers(app)
 
     app.include_router(health.router)

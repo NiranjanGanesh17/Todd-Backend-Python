@@ -19,6 +19,8 @@ from todd.schemas.api.base import ApiModel
 from todd.schemas.enums import (
     AccountStatus,
     AccountType,
+    CategoryKind,
+    Direction,
     EmailConnectionStatus,
     InsightStatus,
     LockMode,
@@ -30,15 +32,22 @@ CheckState = Literal["ok", "down", "skipped"]
 
 __all__ = [
     "AnalysisWindow",
+    "CategoriesResponse",
+    "CategoryOption",
+    "CategoryTransactionsResponse",
     "CheckState",
+    "FileTransactionRequest",
+    "FileTransactionResponse",
     "GmailConnectResponse",
     "GmailStatusResponse",
     "GoalsLockedResponse",
     "HealthChecks",
     "HealthResponse",
+    "IncomeSource",
     "InsightOut",
     "ProfileResponse",
     "ReportResponse",
+    "TransactionOut",
     "UnlockRequest",
     "UnlockResponse",
     "UploadResponse",
@@ -113,6 +122,23 @@ class CategoryTotal(ApiModel):
     name: str
     total_paise: int
     trend_pct: float | None
+    #: How many transactions make up the total. The home screen prints it only
+    #: for the uncategorized bucket, where it is a count of work to do
+    #: ("6 to sort") rather than a statistic.
+    txn_count: int = 0
+
+
+class IncomeSource(ApiModel):
+    """One source of money arriving, for the "Came in" breakdown.
+
+    Same shape as a spend category, because it is one — the credit side of
+    the same ledger, filtered the other way.
+    """
+
+    slug: str
+    name: str
+    total_paise: int
+    trend_pct: float | None
 
 
 class ReportResponse(ApiModel):
@@ -123,6 +149,8 @@ class ReportResponse(ApiModel):
     locked_accounts: list[LockedAccount]
     totals: ReportTotals
     monthly_spend: list[MonthlySpend]
+    #: Where the money in `totals.moneyInPaise` came from, largest first.
+    income_sources: list[IncomeSource]
     biggest_month: BiggestMonth | None
     categories: list[CategoryTotal]
     worth_a_look: list[InsightOut]
@@ -231,3 +259,76 @@ class GoalsLockedResponse(ApiModel):
 
 class WaitlistResponse(ApiModel):
     on_waitlist: Literal[True] = True
+
+
+# ------------------------------------------------- category drill-down (new)
+
+
+class TransactionOut(ApiModel):
+    """One ledger row, as a category drill-down shows it.
+
+    `merchantName` or `counterpartyName` is what a person reads;
+    `rawDescription` is kept so they can see what the bank actually printed
+    when a label looks wrong.
+    """
+
+    id: str
+    txn_date: str
+    amount_paise: int
+    direction: Direction
+    raw_description: str
+    #: Server-written, so two screens cannot phrase the same row differently
+    #: (§6). Shape is `RAIL / who`, e.g. "UPI / ramesh.k@okaxis".
+    title: str
+    #: The payment rail — UPI, NEFT, POS, ACH. What a person recognises first.
+    rail: str | None
+    #: Last 4 of the account it moved through. Never more than 4 (§12).
+    account_masked: str | None
+    merchant_name: str | None
+    counterparty_name: str | None
+    counterparty_vpa: str | None
+    category_slug: str | None
+    category_name: str | None
+    #: Which rung of the ladder decided this (§9) — `merchant_dict`,
+    #: `vpa_person`, `unmatched`, and so on.
+    category_source: str | None
+    category_confidence: float | None
+    is_transfer: bool
+    account_label: str
+
+
+class CategoryOption(ApiModel):
+    """A category a transaction can be filed under."""
+
+    slug: str
+    name: str
+    kind: CategoryKind
+
+
+class CategoriesResponse(ApiModel):
+    categories: list[CategoryOption]
+
+
+class FileTransactionRequest(ApiModel):
+    category_slug: str
+    #: Apply to every future transaction from the same payee, not just this
+    #: one. This is what makes sorting compound instead of being busywork.
+    apply_to_future: bool = False
+
+
+class FileTransactionResponse(ApiModel):
+    id: str
+    category_slug: str
+    category_name: str
+    #: How many rows this one decision moved, including future-proofing.
+    affected: int
+
+
+class CategoryTransactionsResponse(ApiModel):
+    slug: str
+    name: str
+    window: ReportWindow
+    total_paise: int
+    #: Total rows matching, which may exceed those returned.
+    count: int
+    transactions: list[TransactionOut]

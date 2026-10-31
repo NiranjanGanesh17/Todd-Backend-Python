@@ -22,7 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from todd.config import Settings
 from todd.log import get_logger
 from todd.parsers.dedupe import fingerprint
+from todd.parsers.institution import detect_account
 from todd.parsers.pdf.extract import (
+    Document,
     PdfEncryptedError,
     PdfUnreadableError,
     extract_document,
@@ -161,7 +163,7 @@ def generate_guesses(display_name: str | None, dob: dt.date | None) -> list[str]
     return guesses
 
 
-def open_with_ladder(data: bytes, candidates: list[str]) -> tuple[object | None, str | None, int]:
+def open_with_ladder(data: bytes, candidates: list[str]) -> tuple[Document | None, str | None, int]:
     """Try no password first, then each candidate. Returns (doc, password, tries).
 
     Trying without a password first matters: most statements are not encrypted
@@ -383,7 +385,19 @@ async def process_document(
     if used_password and remember_password:
         await _remember(session, user_id=user_id, settings=settings, password=used_password)
 
-    result = extract_table(document)  # type: ignore[arg-type]
+    # Who this belongs to, read off the page rather than assumed. The caller's
+    # hint — the Gmail sender's bank — stands in only where the header is
+    # silent. Without this every statement resolves to the same "unknown
+    # savings" account and Profile shows one row for four real accounts.
+    hint = detect_account(
+        [line.text for line in document.pages[0].lines] if document.pages else [],
+        fallback=institution,
+        fallback_type=account_type,
+    )
+    institution = hint.institution
+    account_type = hint.account_type
+
+    result = extract_table(document)
     attempts = [
         ParseAttempt(
             strategy=ParseStrategy.TABLE_EXTRACT,
@@ -412,7 +426,7 @@ async def process_document(
         user_id=user_id,
         institution=institution,
         account_type=account_type,
-        masked_number=None,
+        masked_number=hint.masked_number,
     )
     statement_id = await upsert_statement(
         session,
@@ -434,6 +448,12 @@ async def process_document(
         statement_id=statement_id,
         rows=result.rows,
     )
+
+    # Label what was just written. Rungs 1-7 are pure rules: no network, no
+    # model, no cost, so there is no reason to defer them to a queue.
+    from todd.worker.agents.enrich import enrich_user
+
+    await enrich_user(session, user_id=user_id, settings=settings)
 
     status = DocumentStatus.DONE if gate.reconciled else DocumentStatus.NEEDS_REVIEW
     await session.execute(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from todd.config import DEV_MASTER_KEY
 from todd.worker.lib.crypto import (
     Sealed,
     SealedSecretUnreadableError,
@@ -56,3 +57,24 @@ def test_corrupt_ciphertext_does_not_crash_the_ladder() -> None:
 def test_a_master_key_of_the_wrong_length_is_refused() -> None:
     with pytest.raises(ValueError, match="32 bytes"):
         seal(PASSWORD, master_key="c2hvcnQ=", key_id="k")
+
+
+def test_the_development_master_key_actually_works() -> None:
+    """The fallback key every developer runs with must be usable.
+
+    Building a fresh key in each test left this one untested, and a constant
+    that decoded to 35 bytes instead of 32 reached a live OAuth callback before
+    anything noticed. Exercise the real value, not a stand-in.
+    """
+    sealed = seal(PASSWORD, master_key=DEV_MASTER_KEY, key_id="dev-1")
+    assert unseal(sealed, master_key=DEV_MASTER_KEY) == PASSWORD
+
+
+def test_the_default_settings_key_round_trips() -> None:
+    """Whatever Settings hands the app, sealing with it must work."""
+    from todd.config import Settings
+
+    key = Settings(_env_file=None).encryption_master_key  # type: ignore[call-arg]
+    assert key
+    sealed = seal(PASSWORD, master_key=key, key_id="dev-1")
+    assert unseal(sealed, master_key=key) == PASSWORD

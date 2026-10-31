@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+from itertools import pairwise
 from zoneinfo import ZoneInfo
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -51,6 +52,35 @@ def last_complete_months(count: int, *, today: dt.date | None = None) -> list[st
     return keys
 
 
+MONTH_NAME = (
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)  # fmt: skip
+
+
+def month_name(key: str) -> str:
+    """ "2026-08" -> "August". Written server-side so two clients cannot differ."""
+    return MONTH_NAME[int(key.split("-")[1]) - 1]
+
+
+def preceding_months(month_keys: list[str]) -> list[str]:
+    """The window of the same length immediately before `month_keys`.
+
+    This is what a trend compares against: Apr–Sep is judged against Oct–Mar,
+    never against "the same months last year". A window of equal length keeps
+    the comparison honest when the user switches from 3 months to 12.
+    """
+    if not month_keys:
+        return []
+    year, month = (int(part) for part in month_keys[0].split("-"))
+    count = len(month_keys)
+    keys: list[str] = []
+    for offset in range(count, 0, -1):
+        y, m = _shift_month(year, month, -offset)
+        keys.append(f"{y:04d}-{m:02d}")
+    return keys
+
+
 def window_label(month_keys: list[str]) -> str:
     """ "Apr – Sep", or "Apr 2025 – Mar 2026" when the window spans a year end.
 
@@ -67,6 +97,27 @@ def window_label(month_keys: list[str]) -> str:
     if first_year == last_year:
         return f"{first} – {last}"
     return f"{first} {first_year} – {last} {last_year}"
+
+
+def gap_label(month_keys: list[str]) -> str:
+    """The missing months, as Profile says them: "Jul", "Jul – Sep", "4 months".
+
+    A run of consecutive months is a range because that is how someone thinks
+    of it. Scattered months are counted instead: "Missing Apr, Jun, Sep and
+    Nov" is a sentence nobody finishes reading, and the action is the same.
+    """
+    if not month_keys:
+        return ""
+    ordered = sorted(month_keys)
+    names = [MONTH_ABBR[int(key.split("-")[1]) - 1] for key in ordered]
+    if len(ordered) == 1:
+        return names[0]
+
+    indexes = [int(k[:4]) * 12 + int(k[5:7]) for k in ordered]
+    consecutive = all(b - a == 1 for a, b in pairwise(indexes))
+    if consecutive:
+        return f"{names[0]} – {names[-1]}"
+    return f"{len(ordered)} months"
 
 
 def month_bounds(key: str) -> tuple[dt.date, dt.date]:
