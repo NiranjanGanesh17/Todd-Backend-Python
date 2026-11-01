@@ -111,7 +111,12 @@ async def test_report_falls_back_to_the_saved_window(client: AsyncClient) -> Non
 async def test_an_empty_system_says_so_rather_than_inventing_data(client: AsyncClient) -> None:
     report = (await client.get("/v1/report")).json()
     assert report["hasData"] is False
-    assert report["totals"] == {"spentPaise": 0, "moneyInPaise": 0, "savedPctOfIncome": None}
+    assert report["totals"] == {
+        "spentPaise": 0,
+        "moneyInPaise": 0,
+        "savedPaise": None,
+        "savedPctOfIncome": None,
+    }
     assert report["categories"] == []
     assert report["biggestMonth"] is None
     assert all(m["totalPaise"] == 0 for m in report["monthlySpend"])
@@ -811,13 +816,15 @@ async def test_rows_carry_a_server_written_title(client: AsyncClient) -> None:
 # ------------------------------------------------------------- the erasure
 
 
-async def test_deleting_the_account_leaves_nothing_behind(client: AsyncClient) -> None:
+async def test_deleting_the_account_leaves_nothing_behind(
+    client: AsyncClient, settings: Settings
+) -> None:
     """The right the profile screen promises, and the only real start over.
 
     Re-uploading corrects the statements we still hold; it cannot repair an
     account an older parser split in two, or a row whose statement was lost.
     """
-    from todd.worker.lib.storage import LocalStorage
+    from todd.worker.lib.storage import build_storage
 
     payload = {"files": ("erase-me.pdf", b"not a pdf, but stored", "application/pdf")}
     uploaded = (await client.post("/v1/documents", files=payload)).json()
@@ -839,8 +846,11 @@ async def test_deleting_the_account_leaves_nothing_behind(client: AsyncClient) -
     assert (await client.get("/v1/report")).json()["totals"]["spentPaise"] == 0
 
     # And the PDFs themselves are gone, not just the rows pointing at them.
+    # Through `build_storage`, so this reads the run's own temporary
+    # directory: `LocalStorage()` with no root is the development one, and
+    # the erasure above would have taken the developer's statements with it.
     user = "00000000-0000-4000-8000-000000000001"
-    assert not LocalStorage().exists(f"users/{user}/documents")
+    assert not build_storage(settings).exists(f"users/{user}/documents")
 
 
 async def test_an_erasure_takes_only_the_asker_with_it(client: AsyncClient) -> None:
@@ -881,3 +891,221 @@ async def test_an_erasure_takes_only_the_asker_with_it(client: AsyncClient) -> N
         ).scalar_one()
         assert kept == 1, "the stranger's account went with it"
         await session.execute(text("DELETE FROM users WHERE id = :id"), {"id": stranger})
+
+
+# ------------------------------------------------------- an exact date range
+
+
+async def _spend_on(
+    settings: Settings,
+    days: list[tuple[str, int]],
+    *,
+    direction: str = "debit",
+    institution: str = "icici",
+) -> None:
+    """Rows on given days, publishable and uncategorised, for the dev user."""
+    import datetime as dt
+
+    from sqlalchemy import text
+    from todd.db.session import get_sessionmaker, with_user
+
+    user_id = settings.auth_dev_user_id
+    async with get_sessionmaker()() as session, session.begin():
+        # The bypass user is created on the first request, and this runs
+        # before one.
+        await session.execute(
+            text("INSERT INTO users (id, email) VALUES (:id, :email) ON CONFLICT DO NOTHING"),
+            {"id": uuid.UUID(user_id), "email": settings.auth_dev_user_email},
+        )
+
+    async with (
+        get_sessionmaker()() as session,
+        session.begin(),
+        with_user(session, user_id) as scoped,
+    ):
+        account = (
+            await scoped.execute(
+                text(
+                    "INSERT INTO accounts (user_id, institution, type) "
+                    "VALUES (:uid, :inst, 'savings') RETURNING id"
+                ),
+                {"uid": uuid.UUID(user_id), "inst": institution},
+            )
+        ).scalar_one()
+        for day, paise in days:
+            await scoped.execute(
+                text(
+                    "INSERT INTO transactions (user_id, account_id, source, txn_date, "
+                    "  amount_paise, direction, raw_description, fingerprint) "
+                    "VALUES (:uid, :aid, 'statement', :d, :amt, :dir, :desc, :fp)"
+                ),
+                {
+                    "uid": uuid.UUID(user_id),
+                    "aid": account,
+                    "d": dt.date.fromisoformat(day),
+                    "amt": paise,
+                    "dir": direction,
+                    "desc": f"UPI/TEST/{day}",
+                    "fp": uuid.uuid4().hex,
+                },
+            )
+
+
+async def test_a_date_range_counts_only_the_days_inside_it(
+    client: AsyncClient, settings: Settings
+) -> None:
+    """ "From the 30th of July to the 30th of September" is a question neither
+    a preset nor a month can ask, and the answer has to stop at both ends."""
+    await _spend_on(
+        settings,
+        [("2026-07-29", 100_00), ("2026-07-30", 200_00), ("2026-08-15", 300_00)],
+    )
+
+    body = (await client.get("/v1/report?from=2026-07-30&to=2026-09-30")).json()
+    window = body["window"]
+    assert window["exact"] is True
+    assert window["start"] == "2026-07-30"
+    assert window["end"] == "2026-09-30"
+    assert window["label"] == "30 Jul – 30 Sep"
+    assert window["months"] == ["2026-07", "2026-08", "2026-09"]
+    assert window["dayCount"] == 63
+
+    # The 29th is a day before the range: it is not in the total...
+    assert body["totals"]["spentPaise"] == 500_00
+    # ...nor in July's bar, which is clipped to the days asked for rather than
+    # showing a month the figures above do not contain.
+    july = next(row for row in body["monthlySpend"] if row["month"] == "2026-07")
+    assert july["totalPaise"] == 200_00
+    assert july["inWindow"] is True
+    assert body["categories"][0]["totalPaise"] == 500_00
+
+    # And the drill-down is drawn for the same days, or its total would differ
+    # from the bar that opened it.
+    rows = (
+        await client.get("/v1/categories/uncategorized/transactions?from=2026-07-30&to=2026-09-30")
+    ).json()
+    assert rows["totalPaise"] == 500_00
+    assert rows["count"] == 2
+    assert rows["window"]["label"] == "30 Jul – 30 Sep"
+
+
+async def test_a_range_of_one_day_is_a_range(client: AsyncClient, settings: Settings) -> None:
+    await _spend_on(settings, [("2026-07-30", 200_00), ("2026-07-31", 900_00)])
+    body = (await client.get("/v1/report?from=2026-07-30&to=2026-07-30")).json()
+    assert body["totals"]["spentPaise"] == 200_00
+    assert body["window"]["dayCount"] == 1
+    assert body["window"]["label"] == "30 Jul 2026"
+
+
+async def test_half_a_range_is_refused_rather_than_guessed(client: AsyncClient) -> None:
+    """Filling in the missing end would answer a question nobody asked — and
+    the report would look like the dates had been applied."""
+    for query in ("from=2026-07-30", "to=2026-09-30"):
+        response = await client.get(f"/v1/report?{query}")
+        assert response.status_code == 400, query
+        assert response.json()["error"]["code"] == "bad_request"
+
+
+async def test_a_range_that_is_not_one_is_refused(client: AsyncClient) -> None:
+    bad = [
+        "from=2026-09-30&to=2026-07-30",  # the wrong way round
+        "from=30-07-2026&to=30-09-2026",  # day first, which is not ISO
+        "from=2026-02-30&to=2026-03-01",  # not a day that exists
+        "from=2000-01-01&to=2026-01-01",  # longer than the cap
+    ]
+    for query in bad:
+        response = await client.get(f"/v1/report?{query}")
+        assert response.status_code == 400, query
+
+
+async def test_dates_beat_a_month_and_a_preset(client: AsyncClient) -> None:
+    body = (
+        await client.get("/v1/report?months=12&month=2026-04&from=2026-07-30&to=2026-09-30")
+    ).json()
+    assert body["window"]["start"] == "2026-07-30"
+
+
+async def test_a_preset_still_carries_the_days_it_covers(client: AsyncClient) -> None:
+    """Every window has dates now, not only the ones the user drew."""
+    body = (await client.get("/v1/report?month=2026-04")).json()
+    assert body["window"]["exact"] is False
+    assert body["window"]["start"] == "2026-04-01"
+    assert body["window"]["end"] == "2026-04-30"
+    assert body["window"]["dayCount"] == 30
+
+
+# ------------------------------------------------------------ what was saved
+
+
+async def test_what_was_saved_is_what_came_in_less_what_went_out(
+    client: AsyncClient, settings: Settings
+) -> None:
+    """The screen says a rupee figure, so the rupee figure is the server's.
+
+    Two clients subtracting it themselves is two chances to disagree with the
+    percentage printed beside it.
+    """
+    await _spend_on(settings, [("2026-08-10", 300_00), ("2026-08-20", 200_00)])
+    await _spend_on(settings, [("2026-08-01", 1_000_00)], direction="credit", institution="bob")
+
+    totals = (await client.get("/v1/report?month=2026-08")).json()["totals"]
+    assert totals["moneyInPaise"] == 1_000_00
+    assert totals["spentPaise"] == 500_00
+    assert totals["savedPaise"] == 500_00
+    assert totals["savedPctOfIncome"] == 50.0
+
+
+async def test_spending_more_than_came_in_is_a_negative_saving(
+    client: AsyncClient, settings: Settings
+) -> None:
+    """Rounded up to zero it would read as a month that broke even."""
+    await _spend_on(settings, [("2026-08-10", 1_500_00)])
+    await _spend_on(settings, [("2026-08-01", 1_000_00)], direction="credit", institution="bob")
+
+    totals = (await client.get("/v1/report?month=2026-08")).json()["totals"]
+    assert totals["savedPaise"] == -500_00
+    assert totals["savedPctOfIncome"] == -50.0
+
+
+async def test_nothing_coming_in_says_nothing_about_saving(
+    client: AsyncClient, settings: Settings
+) -> None:
+    """A card statement on its own is not a month that overspent everything.
+
+    With no credits in the window the only honest answer is that we cannot
+    tell, and the screen draws a dash for it.
+    """
+    await _spend_on(settings, [("2026-08-10", 1_500_00)])
+
+    totals = (await client.get("/v1/report?month=2026-08")).json()["totals"]
+    assert totals["spentPaise"] == 1_500_00
+    assert totals["savedPaise"] is None
+    assert totals["savedPctOfIncome"] is None
+
+
+async def test_uploading_a_file_we_lost_puts_it_back(
+    client: AsyncClient, settings: Settings
+) -> None:
+    """A document row can outlive its object, and the re-read needs the file.
+
+    The row is deduplicated on content, so a second upload used to add
+    nothing — and if the object was gone, reading it again failed on a key
+    pointing at nothing. Uploading it again is the user handing us the file.
+    """
+    from todd.worker.lib.storage import build_storage
+
+    payload = {"files": ("lost.pdf", b"not a pdf, but stored", "application/pdf")}
+    first = (await client.post("/v1/documents", files=payload)).json()
+    await _drain(client, first["documents"])
+
+    storage = build_storage(settings)
+    user = "00000000-0000-4000-8000-000000000001"
+    key = f"users/{user}/documents/{first['documents'][0]['id']}/lost.pdf"
+    assert storage.exists(key)
+    storage.delete_prefix(f"users/{user}/documents/{first['documents'][0]['id']}")
+    assert not storage.exists(key)
+
+    again = (await client.post("/v1/documents", files=payload)).json()
+    assert again["duplicates"] == 1
+    assert again["documents"][0]["id"] == first["documents"][0]["id"], "still one document"
+    assert storage.exists(key), "the file is back"

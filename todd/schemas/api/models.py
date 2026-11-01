@@ -104,6 +104,16 @@ class ReportWindow(ApiModel):
     #: How many months in this range have statements but not from every
     #: account — the figures are real but short of the whole picture.
     incomplete_months: int = 0
+    #: The days the figures are actually counted over, inclusive. For a preset
+    #: or a single month these are that month's own ends; for a range the user
+    #: drew they are the days they drew.
+    start: str
+    end: str
+    day_count: int
+    #: True when the user picked the days themselves. The screen says "Days"
+    #: rather than "Months" for one, because "3 months" for 30 Jul – 30 Sep is
+    #: a count of months touched, not of anything the user asked for.
+    exact: bool = False
 
 
 class LockedAccount(ApiModel):
@@ -115,6 +125,12 @@ class LockedAccount(ApiModel):
 class ReportTotals(ApiModel):
     spent_paise: int
     money_in_paise: int
+    #: What was kept: money in minus money out. Negative when the window spent
+    #: more than it took in. Null — like the percentage below — when nothing
+    #: came in at all: statements that show only spending cannot tell us
+    #: whether anything was saved, and "you overspent everything" would be a
+    #: claim about the statements we hold rather than about the money.
+    saved_paise: int | None
     saved_pct_of_income: float | None
 
 

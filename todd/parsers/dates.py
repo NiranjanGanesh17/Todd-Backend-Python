@@ -99,6 +99,41 @@ def window_label(month_keys: list[str]) -> str:
     return f"{first} {first_year} – {last} {last_year}"
 
 
+def months_between(start: dt.date, end: dt.date) -> list[str]:
+    """Every `YYYY-MM` a date range touches, oldest first.
+
+    A range the user drew by hand rarely starts on the 1st, so the months it
+    *touches* are not the months it *covers*: 30 Jul – 30 Sep touches three,
+    and two days of one of them. The chart and the coverage grid are monthly
+    and need the list; the figures are counted over the dates themselves.
+    """
+    if end < start:
+        raise ValueError("end is before start")
+    keys: list[str] = []
+    year, month = start.year, start.month
+    while (year, month) <= (end.year, end.month):
+        keys.append(f"{year:04d}-{month:02d}")
+        year, month = _shift_month(year, month, 1)
+    return keys
+
+
+def range_label(start: dt.date, end: dt.date) -> str:
+    """ "30 Jul – 30 Sep", or "30 Dec 2025 – 2 Jan 2026" across a year end.
+
+    Day-first, like every date an Indian bank prints. The year is dropped
+    where both ends share it, the same way `window_label` drops it: the user
+    picked these dates a moment ago and does not need telling which year they
+    are in.
+    """
+    first = f"{start.day} {MONTH_ABBR[start.month - 1]}"
+    last = f"{end.day} {MONTH_ABBR[end.month - 1]}"
+    if start == end:
+        return f"{first} {start.year}"
+    if start.year == end.year:
+        return f"{first} – {last}"
+    return f"{first} {start.year} – {last} {end.year}"
+
+
 def gap_label(month_keys: list[str]) -> str:
     """The missing months, as Profile says them: "Jul", "Jul – Sep", "4 months".
 

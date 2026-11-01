@@ -25,9 +25,39 @@ from dataclasses import dataclass
 
 from todd.schemas.enums import AccountType, Institution
 
-#: How much of the document to read. The header is the only part that names
-#: the account; narration further down names other people's banks.
+#: How much of the document to read when its table cannot be found. The
+#: header is the only part that names the account; narration further down
+#: names other people's banks.
 HEADER_LINES = 40
+
+#: How far to look for the table before giving up and counting lines instead.
+MAX_HEADER_SCAN = 120
+
+#: The words a statement prints across the top of its table. Three on one
+#: line is the table starting, and so the header ending — which is where the
+#: banks print the account: "in page 1 just before the table starts".
+_COLUMN_WORDS = frozenset(
+    {
+        "amount",
+        "balance",
+        "chq",
+        "credit",
+        "debit",
+        "deposit",
+        "deposits",
+        "description",
+        "mode",
+        "narration",
+        "particulars",
+        "ref",
+        "remarks",
+        "txn",
+        "withdrawal",
+        "withdrawals",
+    }
+)
+
+_WORDS = re.compile(r"[a-z]+")
 
 #: Brand names and IFSC prefixes. The IFSC is the stronger signal — it is
 #: structural, printed once, and cannot appear in someone else's narration —
@@ -66,13 +96,40 @@ _CARD_MARKS: tuple[str, ...] = (
     r"\bstatement\s+date\b.*\bdue\s+date\b",
 )
 
-#: A labelled account or card number, and nothing else. Keyed on the label so
-#: a reference number in a narration line can never be mistaken for one.
-_ACCOUNT_NUMBER = re.compile(
-    r"(?:account|a\s*/\s*c|acct|card)\s*(?:no\.?|number|#)?\s*[:\-]?\s*"
-    r"([0-9Xx*•·\s\-]{6,32})",
+#: The sentence a bank prints over the account the statement is *for*:
+#: "Statement of Transactions in Savings Account Number: 004501564577".
+#: Nothing else on the page is this explicit, so nothing else outranks it.
+_STATEMENT_OF = re.compile(
+    r"statement\s+of\s+(?:transactions?|accounts?)\b[^:]{0,48}?"
+    r"\baccount\s*(?:no\.?|number|#)?\s*[:\-]?\s*([0-9Xx*•·\s\-]{0,32})",
     re.IGNORECASE,
 )
+
+#: A labelled field: "Account No: 50100123456789", "A/c No : XXXXXXXX3424",
+#: "Card Number 4035XXXXXXXX1008". The word for *number* is required — "from
+#: a/c 4941" inside a narration is not a labelled field, and leaving it
+#: optional is what let a transaction line name the account.
+_ACCOUNT_NUMBER = re.compile(
+    r"(?:account|a\s*/\s*c|acct|card)\s*(?:no\.?|number|#)\s*[:\-]?\s*"
+    r"([0-9Xx*•·\s\-]{0,32})",
+    re.IGNORECASE,
+)
+
+#: A row from the table rather than the header: it carries a date, or an
+#: amount printed to the paise. The account is never named in one.
+_TRANSACTION_ROW = re.compile(r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b|\b\d[\d,]*\.\d{2}\b")
+
+#: A value sitting under its label rather than beside it, which is how a
+#: two-column header comes out of a PDF: "Account Number:" then "004501564577".
+_NUMBER_ONLY = re.compile(r"^[0-9Xx*•·\s\-]{6,32}$")
+
+#: One group of an account or card number: 004501564577, XXXXXXXX3424, or
+#: each of the four in "4035 XXXX XXXX 1008".
+_NUMBER_GROUP = re.compile(r"[0-9Xx*•·\-]{4,}")
+
+#: A date is not part of an account number, and banks print the period right
+#: beside it: "Account Number: 004501564577 01-07-2026 to 31-07-2026".
+_DATE_TOKEN = re.compile(r"^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$")
 
 #: Card numbers are often printed with no label at all: 4035XXXXXXXX1008.
 #: Not `\b` at the end: an underscore is a word character, so the number in
@@ -94,6 +151,27 @@ class AccountHint:
     @property
     def identified(self) -> bool:
         return self.institution is not Institution.UNKNOWN
+
+
+def header_of(lines: Sequence[str]) -> list[str]:
+    """The lines above the table, which is the part that names the account.
+
+    Both banks here print the account number at the bottom of the header,
+    immediately above the column titles, so where the table starts is where
+    this has to stop — a fixed count of lines either cuts the account off in
+    a statement with a tall header, or reads narrations in one with a short
+    one, and narrations name other people's banks and other people's
+    accounts.
+    """
+    for index, line in enumerate(lines[:MAX_HEADER_SCAN]):
+        found = _WORDS.findall(line.lower())
+        if len(_COLUMN_WORDS.intersection(found)) >= 3:
+            # A page that opens with the table has no header to read; fall
+            # back rather than hand the callers nothing.
+            if index >= 2:
+                return list(lines[:index])
+            break
+    return list(lines[:HEADER_LINES])
 
 
 def detect_institution(text: str) -> Institution:
@@ -118,25 +196,85 @@ def detect_account_type(text: str) -> AccountType | None:
     return AccountType.CREDIT_CARD if hits >= 2 else None
 
 
+def _number_run(captured: str) -> str:
+    """The number itself, and nothing that merely follows it on the line.
+
+    The groups of one number, up to the first token that is not one: the
+    period a bank prints beside the account number is four more digits, and
+    taken as part of it the account reads ··2026 every month of 2026.
+    """
+    run: list[str] = []
+    for token in captured.split():
+        if not _NUMBER_GROUP.fullmatch(token) or _DATE_TOKEN.match(token):
+            break
+        run.append(token)
+    return "".join(run)
+
+
+def _last_four(captured: str, follower: str | None) -> str | None:
+    """Four digits from a captured field, or from the line under it.
+
+    A header laid out in two columns comes out of the PDF as a label on one
+    line and its value on the next, so a label with nothing after it is not
+    the same as no account number.
+    """
+    digits = _DIGITS.findall(_number_run(captured))
+    if len(digits) < 4 and follower is not None and _NUMBER_ONLY.match(follower.strip()):
+        digits = _DIGITS.findall(_number_run(follower))
+    # Between a page reference that happened to follow the word "account" and
+    # a run long enough to be two numbers read as one.
+    return "".join(digits[-4:]) if 4 <= len(digits) <= 20 else None
+
+
 def detect_masked_number(lines: Sequence[str]) -> str | None:
-    """The last four digits of the account or card number, if one is printed.
+    """The last four digits of the account this statement is for, if printed.
+
+    Read in three passes over the whole header, strongest wording first,
+    rather than taking whatever the first line happens to offer:
+
+    1. the bank's own sentence — "Statement of Transactions in Savings
+       Account Number: ..." — which names the account the statement is of,
+    2. a labelled field anywhere in the header, as long as the line is not a
+       row of the table,
+    3. an unlabelled masked card number, the shape only a PAN has.
+
+    The pass order is the fix for one account appearing three times on
+    Profile. Line order used to decide it, and line order is a property of
+    the month's transactions: three statements of one ICICI account read
+    "from a/c 4941", "A/c 9483" and "a/c 4942" out of three different
+    narrations, and each last four made an account of its own.
 
     Only ever four digits leave this function. §12 — the full number is not
     ours to keep, and the four are what the user recognises the row by.
     """
-    for line in lines:
+    followers: list[str | None] = [*lines[1:], None]
+    pairs = list(zip(lines, followers, strict=True))
+
+    # Over the header as one piece of text, not line by line. A PDF has no
+    # sentences, only words at positions: the same printed line arrives
+    # whole, wrapped after "Savings", or split with the number in a column
+    # of its own, depending on the month's layout. Matching per line reads
+    # the account in some statements and not in others — which is the bug.
+    for sentence in _STATEMENT_OF.finditer("\n".join(lines)):
+        found = _last_four(sentence.group(1), None)
+        if found:
+            return found
+
+    for line, follower in pairs:
+        # A narration can carry anything, including the words and digits of
+        # an account number. The table is not where the account is named.
+        if _TRANSACTION_ROW.search(line):
+            continue
+        field = _ACCOUNT_NUMBER.search(line)
+        if field:
+            found = _last_four(field.group(1), follower)
+            if found:
+                return found
+
+    for line, _ in pairs:
         unlabelled = _MASKED_CARD.search(line)
         if unlabelled:
             return unlabelled.group(1)
-
-        match = _ACCOUNT_NUMBER.search(line)
-        if not match:
-            continue
-        digits = _DIGITS.findall(match.group(1))
-        # Between a page reference that happened to follow the word "account"
-        # and a run long enough to be two numbers read as one.
-        if 4 <= len(digits) <= 20:
-            return "".join(digits[-4:])
     return None
 
 
@@ -164,7 +302,7 @@ def detect_account(
     usually. The page overrules it when it names a bank of its own, because
     the page is the account and the sender is only how it arrived.
     """
-    header = list(lines[:HEADER_LINES])
+    header = header_of(lines)
     text = "\n".join(header).lower()
 
     institution = detect_institution(text)

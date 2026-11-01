@@ -87,4 +87,4 @@ def build_storage(settings: Settings) -> Storage:
             "Supabase storage is not implemented. Statements must not be written "
             "to local disk in production."
         )
-    return LocalStorage()
+    return LocalStorage(settings.storage_dir)

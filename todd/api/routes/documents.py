@@ -215,7 +215,10 @@ async def upload_documents(
         existing = (
             (
                 await session.execute(
-                    text("SELECT id, status::text AS status FROM documents WHERE sha256 = :sha"),
+                    text(
+                        "SELECT id, status::text AS status, storage_key "
+                        "FROM documents WHERE sha256 = :sha"
+                    ),
                     {"sha": digest},
                 )
             )
@@ -238,6 +241,15 @@ async def upload_documents(
             # `converge_transactions` deletes what the statement no longer
             # claims before inserting what it does, so rows are corrected
             # rather than duplicated, and a category the user set survives.
+            # The row can outlive the object: an erasure that ran against a
+            # shared storage directory, a restore that brought the database
+            # back but not the bucket. Re-uploading the file is the user
+            # saying "here it is again", and without this the re-read fails
+            # on a key that points at nothing.
+            if not storage.exists(existing["storage_key"]):
+                storage.put(existing["storage_key"], data)
+                logger.info("document_file_restored", document_id=str(existing["id"]))
+
             duplicates += 1
             queued.append(
                 QueuedDocument(id=str(existing["id"]), filename=upload.filename or "statement")

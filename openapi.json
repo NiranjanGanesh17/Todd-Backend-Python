@@ -1122,6 +1122,17 @@
             "title": "Moneyinpaise",
             "type": "integer"
           },
+          "savedPaise": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Savedpaise"
+          },
           "savedPctOfIncome": {
             "anyOf": [
               {
@@ -1141,6 +1152,7 @@
         "required": [
           "spentPaise",
           "moneyInPaise",
+          "savedPaise",
           "savedPctOfIncome"
         ],
         "title": "ReportTotals",
@@ -1148,6 +1160,19 @@
       },
       "ReportWindow": {
         "properties": {
+          "dayCount": {
+            "title": "Daycount",
+            "type": "integer"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "exact": {
+            "default": false,
+            "title": "Exact",
+            "type": "boolean"
+          },
           "incompleteMonths": {
             "default": 0,
             "title": "Incompletemonths",
@@ -1167,12 +1192,19 @@
             },
             "title": "Months",
             "type": "array"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
           }
         },
         "required": [
           "months",
           "label",
-          "monthCount"
+          "monthCount",
+          "start",
+          "end",
+          "dayCount"
         ],
         "title": "ReportWindow",
         "type": "object"
@@ -1640,6 +1672,42 @@
               ],
               "description": "One month, as 2026-04. Beats `months`.",
               "title": "Month"
+            }
+          },
+          {
+            "description": "First day, as 2026-07-30. Beats everything else.",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "First day, as 2026-07-30. Beats everything else.",
+              "title": "From"
+            }
+          },
+          {
+            "description": "Last day, as 2026-09-30.",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Last day, as 2026-09-30.",
+              "title": "To"
             }
           },
           {
@@ -2114,6 +2182,42 @@
               ],
               "description": "One month, as 2026-04. Beats `months`.",
               "title": "Month"
+            }
+          },
+          {
+            "description": "First day, as 2026-07-30. With `to`, beats everything else.",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "First day, as 2026-07-30. With `to`, beats everything else.",
+              "title": "From"
+            }
+          },
+          {
+            "description": "Last day, as 2026-09-30.",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Last day, as 2026-09-30.",
+              "title": "To"
             }
           }
         ],

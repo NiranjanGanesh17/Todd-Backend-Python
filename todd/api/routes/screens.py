@@ -7,8 +7,10 @@ string is written here.
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 import uuid
+from dataclasses import dataclass
 from typing import Literal
 
 from fastapi import APIRouter, Query
@@ -21,8 +23,12 @@ from todd.log import get_logger
 from todd.parsers.dates import (
     gap_label,
     last_complete_months,
+    month_bounds,
     month_name,
+    months_between,
     preceding_months,
+    range_label,
+    today_ist,
     window_label,
 )
 from todd.parsers.payee import extract_payee, extract_rail, normalise_payee, row_title
@@ -266,6 +272,82 @@ async def _window_for(session: SessionDep, requested: int | None) -> AnalysisWin
 
 
 MONTH_KEY = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+DATE_KEY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+#: Longest range the picker will answer. Far past the statements anyone
+#: holds, and short of a request that would draw a hundred bars.
+MAX_RANGE_DAYS = 366 * 5
+
+
+@dataclass(frozen=True, slots=True)
+class Window:
+    """What a request is about: days, with the months they fall in.
+
+    Every figure is counted over `start`–`end`. The months come along because
+    the chart, the coverage grid and the labels are monthly — and for a preset
+    or a single month the two say exactly the same thing, the dates being that
+    month's own ends. For a range the user drew they do not, which is the
+    point of having both.
+    """
+
+    months: list[str]
+    start: dt.date
+    end: dt.date
+    #: True when the user picked the days. An end can then fall mid-month, so
+    #: a monthly bar has to be clipped to it rather than taken from the view.
+    exact: bool = False
+
+    @property
+    def label(self) -> str:
+        return range_label(self.start, self.end) if self.exact else window_label(self.months)
+
+    @property
+    def day_count(self) -> int:
+        return (self.end - self.start).days + 1
+
+    def preceding(self) -> Window:
+        """The window of equal length immediately before this one.
+
+        What every trend is measured against. Months for a month window —
+        Apr–Sep is judged against Oct–Mar, never "the same months last year" —
+        and the same number of days for a range, ending the day before it
+        starts.
+        """
+        if not self.exact:
+            return from_months(preceding_months(self.months))
+        end = self.start - dt.timedelta(days=1)
+        start = end - dt.timedelta(days=self.day_count - 1)
+        return Window(months=months_between(start, end), start=start, end=end, exact=True)
+
+
+def from_months(keys: list[str]) -> Window:
+    """A whole-month window: the first day of the first to the last of the last."""
+    if not keys:
+        # An empty month list means an empty ledger. A window of today over
+        # today counts nothing, which is the honest answer.
+        today = today_ist()
+        return Window(months=[], start=today, end=today)
+    return Window(months=keys, start=month_bounds(keys[0])[0], end=month_bounds(keys[-1])[1])
+
+
+def _exact_window(start: str, end: str) -> Window:
+    """A range the user drew, validated.
+
+    Both ends or neither: a half-given range would silently become something
+    else — a preset, or the saved window — and the report would answer a
+    question nobody asked.
+    """
+    if not (DATE_KEY.match(start) and DATE_KEY.match(end)):
+        raise ApiError(400, "bad_request", "A date looks like 2026-07-30.")
+    try:
+        first, last = dt.date.fromisoformat(start), dt.date.fromisoformat(end)
+    except ValueError:
+        raise ApiError(400, "bad_request", "That is not a date.") from None
+    if last < first:
+        raise ApiError(400, "bad_request", "The first date has to come before the second.")
+    if (last - first).days + 1 > MAX_RANGE_DAYS:
+        raise ApiError(400, "bad_request", "A range can cover at most five years.")
+    return Window(months=months_between(first, last), start=first, end=last, exact=True)
 
 
 async def resolve_window(
@@ -273,21 +355,32 @@ async def resolve_window(
     *,
     months: str | None,
     month: str | None,
-) -> list[str]:
-    """Which months this request is about, oldest first.
+    start: str | None = None,
+    end: str | None = None,
+) -> Window:
+    """Which days this request is about.
 
-    Three ways to ask, in order of precedence:
+    Four ways to ask, in order of precedence:
 
+    * `from=2026-07-30&to=2026-09-30` — exactly those days. Neither a preset
+      nor a month can express "the end of July to the end of September", and
+      that is the shape a question about one trip, one job or one tenancy
+      takes.
     * `month=2026-04` — that month alone. The month strip on Home taps
       straight through to this, which is the only way to see one month: the
       presets can only ever mean "the last N", never "that one".
     * `months=all` — every month from the first statement to last month.
     * `months=3|6|12` — the presets, or the window saved on the profile.
     """
+    if start or end:
+        if not (start and end):
+            raise ApiError(400, "bad_request", "A date range needs both a start and an end.")
+        return _exact_window(start, end)
+
     if month:
         if not MONTH_KEY.match(month):
             raise ApiError(400, "bad_request", "A month looks like 2026-04.")
-        return [month]
+        return from_months([month])
 
     if (months or "").strip().lower() == "all":
         earliest = (
@@ -297,10 +390,10 @@ async def resolve_window(
         ).scalar_one_or_none()
         latest = last_complete_months(1)[0]
         if not earliest:
-            return last_complete_months(await _window_for(session, None))
+            return from_months(last_complete_months(await _window_for(session, None)))
         # Cheaper than a date series, and the two ends are all we have anyway.
         span = (int(latest[:4]) - int(earliest[:4])) * 12 + int(latest[5:7]) - int(earliest[5:7])
-        return last_complete_months(max(span + 1, 1))
+        return from_months(last_complete_months(max(span + 1, 1)))
 
     requested: int | None = None
     if months:
@@ -308,7 +401,7 @@ async def resolve_window(
             requested = int(months)
         except ValueError:
             raise ApiError(400, "bad_request", "That is not a window.") from None
-    return last_complete_months(await _window_for(session, requested))
+    return from_months(last_complete_months(await _window_for(session, requested)))
 
 
 @router.get("/report", response_model=ReportResponse, summary="Home — the whole report")
@@ -319,9 +412,17 @@ async def get_report(
         default=None, description="1, 3, 6, 12 or 'all'. Omit for the saved one."
     ),
     month: str | None = Query(default=None, description="One month, as 2026-04. Beats `months`."),
+    date_from: str | None = Query(
+        default=None,
+        alias="from",
+        description="First day, as 2026-07-30. With `to`, beats everything else.",
+    ),
+    date_to: str | None = Query(default=None, alias="to", description="Last day, as 2026-09-30."),
 ) -> ReportResponse:
-    keys = await resolve_window(session, months=months, month=month)
+    window = await resolve_window(session, months=months, month=month, start=date_from, end=date_to)
+    keys = window.months
     month_count = len(keys)
+    bounds = {"start": window.start, "end": window.end}
 
     # The chart is a picker, so it shows more than the window: you cannot
     # choose April from a strip that only has the six months you are already
@@ -373,6 +474,39 @@ async def get_report(
         .mappings()
         .all()
     )
+    if window.exact:
+        # The ends fall mid-month, so the months at either end of the window
+        # are not the months `v_monthly_spend` holds: counting the whole of
+        # July into a range that starts on the 30th would put twenty-nine days
+        # nobody asked for under the bar, and into the total above it. Only
+        # the window's own months are replaced — the rest of the strip is
+        # still the whole month, because that is what those bars mean.
+        for key in keys:
+            by_month[key] = {"spent": 0, "received": 0}
+        for row in (
+            (
+                await session.execute(
+                    text(
+                        "SELECT to_char(txn_date, 'YYYY-MM') AS month, "
+                        "  COALESCE(SUM(amount_paise) FILTER (WHERE direction = 'debit'), 0) "
+                        "    AS spent, "
+                        "  COALESCE(SUM(amount_paise) FILTER (WHERE direction = 'credit'), 0) "
+                        "    AS received "
+                        "FROM v_publishable_transactions "
+                        "WHERE NOT is_transfer AND txn_date BETWEEN :start AND :end "
+                        "GROUP BY 1"
+                    ),
+                    bounds,
+                )
+            )
+            .mappings()
+            .all()
+        ):
+            by_month[row["month"]] = {
+                "spent": int(row["spent"]),
+                "received": int(row["received"]),
+            }
+
     accounts_by_month = {row["month"]: int(row["accounts"]) for row in coverage}
     # Against every account that has ever produced a statement: a month only
     # one of three banks covers is real, but it is not the whole picture.
@@ -399,7 +533,7 @@ async def get_report(
     # before it that every trend is measured against. A category with no
     # history gets no trend at all — "up 100%" from nothing is not a fact
     # about spending, it is a fact about when the statements start.
-    previous = preceding_months(keys)
+    previous = window.preceding()
     # A trend is only a fact about spending if we hold the months it compares
     # against. Against a window with statements for one month out of six it
     # reads "Travel & fuel up 3913%", which says nothing about travel and
@@ -407,10 +541,10 @@ async def get_report(
     covered_before = (
         await session.execute(
             text("SELECT count(DISTINCT month) FROM v_statement_coverage WHERE month = ANY(:keys)"),
-            {"keys": previous},
+            {"keys": previous.months},
         )
     ).scalar_one_or_none() or 0
-    comparable = covered_before == len(previous)
+    comparable = covered_before == len(previous.months)
 
     categories = [
         CategoryTotal(
@@ -426,21 +560,31 @@ async def get_report(
         )
         for r in (
             await session.execute(
+                # `v_category_spend` by another name: the same predicates, the
+                # same grouping, bounded by dates instead of month keys. The
+                # view cannot answer a range that starts on the 30th, and two
+                # queries — one per shape — is one of them drifting from the
+                # other. Over whole months the two agree exactly, because the
+                # bounds are then the months' own ends.
                 text(
-                    "SELECT category_slug, category_name, "
-                    "       COALESCE(SUM(amount_paise) FILTER (WHERE month = ANY(:keys)), 0) "
-                    "         AS amount_paise, "
-                    "       COALESCE(SUM(txn_count) FILTER (WHERE month = ANY(:keys)), 0) "
-                    "         AS txn_count, "
-                    "       COALESCE(SUM(amount_paise) FILTER (WHERE month = ANY(:previous)), 0) "
-                    "         AS previous_paise "
-                    "FROM v_category_spend "
-                    "WHERE month = ANY(:keys) OR month = ANY(:previous) "
-                    "GROUP BY category_slug, category_name "
-                    "HAVING COALESCE(SUM(amount_paise) FILTER (WHERE month = ANY(:keys)), 0) > 0 "
+                    "SELECT c.slug AS category_slug, c.name AS category_name, "
+                    "       COALESCE(SUM(t.amount_paise) FILTER (WHERE :start <= t.txn_date "
+                    "         AND t.txn_date <= :end), 0) AS amount_paise, "
+                    "       count(*) FILTER (WHERE :start <= t.txn_date "
+                    "         AND t.txn_date <= :end) AS txn_count, "
+                    "       COALESCE(SUM(t.amount_paise) FILTER (WHERE :pstart <= t.txn_date "
+                    "         AND t.txn_date <= :pend), 0) AS previous_paise "
+                    "FROM v_publishable_transactions t "
+                    "LEFT JOIN categories c ON c.id = t.category_id "
+                    "WHERE NOT t.is_transfer AND t.direction = 'debit' "
+                    "  AND (t.txn_date BETWEEN :start AND :end "
+                    "       OR t.txn_date BETWEEN :pstart AND :pend) "
+                    "GROUP BY c.slug, c.name "
+                    "HAVING COALESCE(SUM(t.amount_paise) FILTER (WHERE :start <= t.txn_date "
+                    "         AND t.txn_date <= :end), 0) > 0 "
                     "ORDER BY 3 DESC"
                 ),
-                {"keys": keys, "previous": previous},
+                {**bounds, "pstart": previous.start, "pend": previous.end},
             )
         )
         .mappings()
@@ -465,11 +609,11 @@ async def get_report(
                     "       SUM(t.amount_paise) AS total "
                     "FROM v_publishable_transactions t "
                     "LEFT JOIN categories c ON c.id = t.category_id "
-                    "WHERE to_char(t.txn_date, 'YYYY-MM') = ANY(:keys) "
+                    "WHERE t.txn_date BETWEEN :start AND :end "
                     "  AND t.direction = 'credit' AND NOT t.is_transfer "
                     "GROUP BY c.slug, c.name, c.kind ORDER BY 4 DESC"
                 ),
-                {"keys": keys},
+                bounds,
             )
         )
         .mappings()
@@ -564,23 +708,36 @@ async def get_report(
             caption = f"{month_name(top.month)} was your biggest month."
             biggest = BiggestMonth(month=top.month, caption=caption)
 
+    # Saved is only answerable when something came in. With no credits in the
+    # window — a card statement on its own, a month before the salary lands —
+    # every rupee spent would read as overspending, which says nothing about
+    # the money and everything about which statements we hold.
+    saved: int | None = None
     saved_pct: float | None = None
     if money_in > 0:
-        saved_pct = round((money_in - spent) / money_in * 100, 1)
+        saved = money_in - spent
+        saved_pct = round(saved / money_in * 100, 1)
 
     return ReportResponse(
         display_name=user["display_name"] if user else None,
         has_data=bool(monthly or categories),
         window=ReportWindow(
             months=keys,
-            label=window_label(keys),
+            label=window.label,
             month_count=month_count,
             incomplete_months=incomplete,
+            start=window.start.isoformat(),
+            end=window.end.isoformat(),
+            day_count=window.day_count,
+            exact=window.exact,
         ),
         available_windows=ALLOWED_WINDOWS,
         locked_accounts=locked,
         totals=ReportTotals(
-            spent_paise=spent, money_in_paise=money_in, saved_pct_of_income=saved_pct
+            spent_paise=spent,
+            money_in_paise=money_in,
+            saved_paise=saved,
+            saved_pct_of_income=saved_pct,
         ),
         monthly_spend=monthly_spend,
         income_sources=income_sources,
@@ -607,6 +764,10 @@ async def category_transactions(
     user_id: UserIdDep,
     months: str | None = Query(default=None, description="1, 3, 6, 12 or 'all'."),
     month: str | None = Query(default=None, description="One month, as 2026-04. Beats `months`."),
+    date_from: str | None = Query(
+        default=None, alias="from", description="First day, as 2026-07-30. Beats everything else."
+    ),
+    date_to: str | None = Query(default=None, alias="to", description="Last day, as 2026-09-30."),
     direction: Literal["debit", "credit"] = Query(
         default="debit", description="debit for spend, credit for income"
     ),
@@ -625,8 +786,16 @@ async def category_transactions(
     """
     # The same selection the bar was drawn for: a drill-down that quietly
     # falls back to the saved window shows a total the user never clicked.
-    keys = await resolve_window(session, months=months, month=month)
-    window = ReportWindow(months=keys, label=window_label(keys), month_count=len(keys))
+    chosen = await resolve_window(session, months=months, month=month, start=date_from, end=date_to)
+    window = ReportWindow(
+        months=chosen.months,
+        label=chosen.label,
+        month_count=len(chosen.months),
+        start=chosen.start.isoformat(),
+        end=chosen.end.isoformat(),
+        day_count=chosen.day_count,
+        exact=chosen.exact,
+    )
 
     name = (
         await session.execute(
@@ -652,7 +821,8 @@ async def category_transactions(
         match = "c.slug = :slug"
 
     params: dict[str, object] = {
-        "keys": keys,
+        "start": chosen.start,
+        "end": chosen.end,
         "limit": limit,
         "offset": offset,
         "direction": direction,
@@ -665,7 +835,7 @@ async def category_transactions(
         LEFT JOIN categories c ON c.id = t.category_id
         LEFT JOIN merchants  m ON m.id = t.merchant_id
         LEFT JOIN accounts   a ON a.id = t.account_id
-        WHERE to_char(t.txn_date, 'YYYY-MM') = ANY(:keys)
+        WHERE t.txn_date BETWEEN :start AND :end
           AND NOT t.is_transfer
           AND t.direction = :direction
           AND {match}
