@@ -17,7 +17,7 @@ from starlette.responses import Response
 from starlette.types import ASGIApp
 
 from todd.api.errors import install_error_handlers, request_id_middleware
-from todd.api.routes import documents, gmail, goals, health, screens
+from todd.api.routes import account, documents, gmail, goals, health, screens
 from todd.config import Settings, get_settings
 from todd.db.session import dispose_engine, init_engine
 from todd.log import configure_logging, get_logger
@@ -73,6 +73,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail="Every request is the dev user. Never reachable in production.",
                 user_id=settings.auth_dev_user_id,
             )
+
+        # A statement half-read when the last process stopped is nobody's
+        # work now. Re-queue it and read it again, or the upload screen that
+        # was watching it waits on a parse that no longer exists.
+        try:
+            resumed = await documents.resume_unfinished(settings)
+            if resumed:
+                logger.info("resumed_unfinished_documents", documents=resumed)
+        except Exception:
+            # Never a reason to refuse to start: a database that cannot answer
+            # this will fail the health check loudly a moment later.
+            logger.exception("resume_unfinished_failed")
+
         yield
         await dispose_engine()
 
@@ -114,6 +127,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(goals.router)
     app.include_router(gmail.router)
     app.include_router(documents.router)
+    app.include_router(account.router)
 
     return app
 

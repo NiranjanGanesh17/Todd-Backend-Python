@@ -7,6 +7,7 @@ string is written here.
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Literal
 
@@ -65,6 +66,9 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/v1", tags=["screens"])
 
 ALLOWED_WINDOWS: list[AnalysisWindow] = [1, 3, 6, 12]
+
+#: How many months the chart offers to choose from, whatever the window is.
+STRIP_MONTHS = 12
 
 #: Short forms for a banner: "ICICI card needs a password" reads better than
 #: "ICICI Bank credit_card".
@@ -261,14 +265,70 @@ async def _window_for(session: SessionDep, requested: int | None) -> AnalysisWin
     return saved if saved in ALLOWED_WINDOWS else 6
 
 
+MONTH_KEY = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+async def resolve_window(
+    session: SessionDep,
+    *,
+    months: str | None,
+    month: str | None,
+) -> list[str]:
+    """Which months this request is about, oldest first.
+
+    Three ways to ask, in order of precedence:
+
+    * `month=2026-04` — that month alone. The month strip on Home taps
+      straight through to this, which is the only way to see one month: the
+      presets can only ever mean "the last N", never "that one".
+    * `months=all` — every month from the first statement to last month.
+    * `months=3|6|12` — the presets, or the window saved on the profile.
+    """
+    if month:
+        if not MONTH_KEY.match(month):
+            raise ApiError(400, "bad_request", "A month looks like 2026-04.")
+        return [month]
+
+    if (months or "").strip().lower() == "all":
+        earliest = (
+            await session.execute(
+                text("SELECT to_char(min(txn_date), 'YYYY-MM') FROM v_publishable_transactions")
+            )
+        ).scalar_one_or_none()
+        latest = last_complete_months(1)[0]
+        if not earliest:
+            return last_complete_months(await _window_for(session, None))
+        # Cheaper than a date series, and the two ends are all we have anyway.
+        span = (int(latest[:4]) - int(earliest[:4])) * 12 + int(latest[5:7]) - int(earliest[5:7])
+        return last_complete_months(max(span + 1, 1))
+
+    requested: int | None = None
+    if months:
+        try:
+            requested = int(months)
+        except ValueError:
+            raise ApiError(400, "bad_request", "That is not a window.") from None
+    return last_complete_months(await _window_for(session, requested))
+
+
 @router.get("/report", response_model=ReportResponse, summary="Home — the whole report")
 async def get_report(
     session: SessionDep,
     user_id: UserIdDep,
-    months: int | None = Query(default=None, description="1, 3, 6 or 12. Omit for the saved one."),
+    months: str | None = Query(
+        default=None, description="1, 3, 6, 12 or 'all'. Omit for the saved one."
+    ),
+    month: str | None = Query(default=None, description="One month, as 2026-04. Beats `months`."),
 ) -> ReportResponse:
-    month_count = await _window_for(session, months)
-    keys = last_complete_months(month_count)
+    keys = await resolve_window(session, months=months, month=month)
+    month_count = len(keys)
+
+    # The chart is a picker, so it shows more than the window: you cannot
+    # choose April from a strip that only has the six months you are already
+    # looking at, and a single month on its own would be a dead end. The last
+    # twelve, plus whatever the window reaches beyond them.
+    strip = sorted(set(last_complete_months(STRIP_MONTHS)) | set(keys))
+    in_window = set(keys)
 
     user = (
         (
@@ -288,7 +348,7 @@ async def get_report(
                     "       COALESCE(received_paise, 0) AS received "
                     "FROM v_monthly_spend WHERE month = ANY(:keys) ORDER BY month"
                 ),
-                {"keys": keys},
+                {"keys": strip},
             )
         )
         .mappings()
@@ -298,10 +358,41 @@ async def get_report(
     by_month: dict[str, dict[str, int]] = {
         r["month"]: {"spent": int(r["spent"]), "received": int(r["received"])} for r in monthly
     }
+    # A month with no statement is not a month where nothing was spent, so the
+    # chart is told which is which rather than drawing both as zero.
+    coverage = (
+        (
+            await session.execute(
+                text(
+                    "SELECT month, count(DISTINCT account_id) AS accounts "
+                    "FROM v_statement_coverage WHERE month = ANY(:keys) GROUP BY month"
+                ),
+                {"keys": strip},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    accounts_by_month = {row["month"]: int(row["accounts"]) for row in coverage}
+    # Against every account that has ever produced a statement: a month only
+    # one of three banks covers is real, but it is not the whole picture.
+    account_total = (
+        await session.execute(text("SELECT count(DISTINCT account_id) FROM v_statement_coverage"))
+    ).scalar_one_or_none() or 0
+
     monthly_spend = [
-        MonthlySpend(month=k, total_paise=by_month.get(k, {}).get("spent", 0)) for k in keys
+        MonthlySpend(
+            month=k,
+            total_paise=by_month.get(k, {}).get("spent", 0),
+            covered=k in accounts_by_month,
+            complete=accounts_by_month.get(k, 0) >= account_total > 0,
+            in_window=k in in_window,
+        )
+        for k in strip
     ]
-    spent = sum(m.total_paise for m in monthly_spend)
+    # Only what the figures above are actually made of.
+    incomplete = sum(1 for m in monthly_spend if m.in_window and m.covered and not m.complete)
+    spent = sum(m.total_paise for m in monthly_spend if m.in_window)
     money_in = sum(by_month.get(k, {}).get("received", 0) for k in keys)
 
     # Both windows in one pass: the one on screen, and the equally long one
@@ -309,12 +400,28 @@ async def get_report(
     # history gets no trend at all — "up 100%" from nothing is not a fact
     # about spending, it is a fact about when the statements start.
     previous = preceding_months(keys)
+    # A trend is only a fact about spending if we hold the months it compares
+    # against. Against a window with statements for one month out of six it
+    # reads "Travel & fuel up 3913%", which says nothing about travel and
+    # everything about where the statements stop.
+    covered_before = (
+        await session.execute(
+            text("SELECT count(DISTINCT month) FROM v_statement_coverage WHERE month = ANY(:keys)"),
+            {"keys": previous},
+        )
+    ).scalar_one_or_none() or 0
+    comparable = covered_before == len(previous)
+
     categories = [
         CategoryTotal(
             slug=r["category_slug"] or UNCATEGORIZED_SLUG,
             name=r["category_name"] or UNCATEGORIZED_NAME,
             total_paise=int(r["amount_paise"]),
-            trend_pct=_trend_pct(int(r["amount_paise"]), int(r["previous_paise"] or 0)),
+            trend_pct=(
+                _trend_pct(int(r["amount_paise"]), int(r["previous_paise"] or 0))
+                if comparable
+                else None
+            ),
             txn_count=int(r["txn_count"] or 0),
         )
         for r in (
@@ -450,7 +557,7 @@ async def get_report(
 
     biggest: BiggestMonth | None = None
     if spent > 0:
-        top = max(monthly_spend, key=lambda m: m.total_paise)
+        top = max((m for m in monthly_spend if m.in_window), key=lambda m: m.total_paise)
         if top.total_paise > 0:
             # The chart already draws how much bigger it was; the caption names
             # *which* month, so the highlight never rests on colour alone.
@@ -464,7 +571,12 @@ async def get_report(
     return ReportResponse(
         display_name=user["display_name"] if user else None,
         has_data=bool(monthly or categories),
-        window=ReportWindow(months=keys, label=window_label(keys), month_count=month_count),
+        window=ReportWindow(
+            months=keys,
+            label=window_label(keys),
+            month_count=month_count,
+            incomplete_months=incomplete,
+        ),
         available_windows=ALLOWED_WINDOWS,
         locked_accounts=locked,
         totals=ReportTotals(
@@ -493,7 +605,8 @@ async def category_transactions(
     slug: str,
     session: SessionDep,
     user_id: UserIdDep,
-    months: int | None = Query(default=None, description="1, 3, 6 or 12."),
+    months: str | None = Query(default=None, description="1, 3, 6, 12 or 'all'."),
+    month: str | None = Query(default=None, description="One month, as 2026-04. Beats `months`."),
     direction: Literal["debit", "credit"] = Query(
         default="debit", description="debit for spend, credit for income"
     ),
@@ -510,9 +623,10 @@ async def category_transactions(
     drill-down whose total differs from the bar that opened it is worse than
     no drill-down at all, so the filters have to match on both sides.
     """
-    month_count = await _window_for(session, months)
-    keys = last_complete_months(month_count)
-    window = ReportWindow(months=keys, label=window_label(keys), month_count=month_count)
+    # The same selection the bar was drawn for: a drill-down that quietly
+    # falls back to the saved window shows a total the user never clicked.
+    keys = await resolve_window(session, months=months, month=month)
+    window = ReportWindow(months=keys, label=window_label(keys), month_count=len(keys))
 
     name = (
         await session.execute(

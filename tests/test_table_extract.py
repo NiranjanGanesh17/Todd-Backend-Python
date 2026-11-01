@@ -137,6 +137,86 @@ def test_wrapped_narration_is_folded_into_its_row() -> None:
     assert "itsnevatha@okaxis" in rows[0].description
 
 
+def test_narration_wrapping_below_its_date_is_kept() -> None:
+    """The other layout: date, amount and balance first, narration after.
+
+    Folding only upwards truncated every statement of this kind at its first
+    line — `UPI/NIRANJAN G/niranjanmech17/UPI/BANK OF` and no further — and
+    glued the lost tail onto the front of the next transaction.
+    """
+
+    def _wrap(top: float, text: str) -> TextLine:
+        return TextLine(
+            page=1,
+            top=top,
+            words=[
+                Word(
+                    text=text, x0=110.0, x1=110.0 + 6.0 * len(text), top=top, bottom=top + 9, page=1
+                )
+            ],
+        )
+
+    document = _document(
+        [
+            _row(100, "30-08-2026", "NIRANJAN G", "10,000.00", "98,500.00"),
+            _wrap(110, "UPI/NIRANJAN G/niranjanmech17/UPI/BANK"),
+            _wrap(120, "OF BA/128760269541/HDF193671a6e0f34a31b"),
+            _row(140, "31-08-2026", "ATM CASH", "2,000.00", "96,500.00"),
+        ]
+    )
+    rows = extract_table(document).rows
+    assert len(rows) == 2
+    # The whole narration, including the reference that proves two rows are
+    # the same transfer between the user's own accounts.
+    assert "128760269541" in rows[0].description
+    assert "niranjanmech17" in rows[0].description
+    # And none of it leaks onto the transaction below.
+    assert "niranjanmech17" not in rows[1].description
+    assert "128760269541" not in rows[1].description
+
+
+def test_a_row_does_not_swallow_the_next_rows_narration() -> None:
+    """The ICICI layout, and the bug that made a transfer read as a salary.
+
+    Its narration wraps below the dated line, and the next transaction's
+    narration begins right after. Folding every wrapped line downward gave the
+    ₹10,000 transfer the first words of the salary credit printed under it,
+    and it came out labelled "Pricewaterhouse Coopers".
+    """
+
+    def _wrap(top: float, text: str) -> TextLine:
+        return TextLine(
+            page=1,
+            top=top,
+            words=[
+                Word(
+                    text=text, x0=110.0, x1=110.0 + 6.0 * len(text), top=top, bottom=top + 9, page=1
+                )
+            ],
+        )
+
+    document = _document(
+        [
+            _row(100, "30-08-2026", "NIRANJAN G", "10,000.00", "10,030.88"),
+            _wrap(110, "UPI/NIRANJAN G/niranjanmech17/UPI/BANK"),
+            _wrap(120, "OF BA/128760269541/HDF193671a6e0f34"),
+            # The salary credit's own narration, printed above its dated line.
+            _wrap(180, "PRICEWATERHOUSE COOPERS SERLLP-SAL"),
+            _row(190, "31-08-2026", "NEFT-CITIN26723640120", "74,240.00", "84,270.88"),
+        ]
+    )
+    rows = extract_table(document).rows
+    assert len(rows) == 2
+
+    transfer, salary = rows
+    # The transfer keeps its own narration, all of it...
+    assert "128760269541" in transfer.description
+    assert "niranjanmech17" in transfer.description
+    # ...and none of the salary's.
+    assert "PRICEWATERHOUSE" not in transfer.description
+    assert "PRICEWATERHOUSE" in salary.description
+
+
 def test_a_header_line_is_not_folded_into_the_first_transaction() -> None:
     """Without the "no standalone amount or date" rule,
     `Statement From: 01/04/2026 ... Opening Balance 25,000.00` becomes

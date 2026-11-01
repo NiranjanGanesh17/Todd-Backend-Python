@@ -12,6 +12,7 @@ ladder can be skipped entirely for the common case.
 from __future__ import annotations
 
 import io
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -196,6 +197,7 @@ def extract_document(
     password: str | None = None,
     *,
     max_pages: int = MAX_PAGES,
+    on_page: Callable[[int, int], None] | None = None,
 ) -> Document:
     """Open a PDF and return its positioned text.
 
@@ -203,6 +205,11 @@ def extract_document(
     caller can walk the password ladder, and `PdfUnreadableError` for anything
     that is not a PDF we can read. The distinction comes from pypdf, never from
     pdfplumber's exception text — see `is_encrypted`.
+
+    `on_page(page, total)` is called as each page is read. Extraction is the
+    slow part of an upload, and this is the only place that knows how far it
+    has got, so the progress the user watches comes from here rather than from
+    a timer pretending.
     """
     handle = _as_stream(source)
     encrypted = is_encrypted(handle)
@@ -237,6 +244,8 @@ def extract_document(
                 )
                 for w in raw.extract_words(use_text_flow=False, keep_blank_chars=False)
             ]
+            if on_page is not None:
+                on_page(index, min(total, max_pages))
             pages.append(
                 Page(
                     number=index,

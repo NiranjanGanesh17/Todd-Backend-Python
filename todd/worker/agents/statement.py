@@ -12,8 +12,10 @@ report because `v_publishable_transactions` filters them out.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from sqlalchemy import text
@@ -39,6 +41,7 @@ from todd.schemas.enums import (
     ParseEngine,
     ParseStrategy,
 )
+from todd.worker import progress
 from todd.worker.lib.crypto import Sealed, try_unseal
 
 logger = get_logger(__name__)
@@ -163,18 +166,23 @@ def generate_guesses(display_name: str | None, dob: dt.date | None) -> list[str]
     return guesses
 
 
-def open_with_ladder(data: bytes, candidates: list[str]) -> tuple[Document | None, str | None, int]:
+def open_with_ladder(
+    data: bytes,
+    candidates: list[str],
+    *,
+    on_page: Callable[[int, int], None] | None = None,
+) -> tuple[Document | None, str | None, int]:
     """Try no password first, then each candidate. Returns (doc, password, tries).
 
     Trying without a password first matters: most statements are not encrypted
     at all, and the ladder should cost nothing for them.
     """
     if not is_encrypted(data):
-        return extract_document(data), None, 0
+        return extract_document(data, on_page=on_page), None, 0
 
     for index, candidate in enumerate(candidates, start=1):
         try:
-            return extract_document(data, candidate), candidate, index
+            return extract_document(data, candidate, on_page=on_page), candidate, index
         except PdfEncryptedError:
             continue
     return None, None, len(candidates)
@@ -190,12 +198,42 @@ async def resolve_account(
     institution: Institution,
     account_type: AccountType,
     masked_number: str | None,
+    document_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
     """Find or create the account on its natural key.
 
     §7.1 step 7 — this is how an account appears on Profile without the user
     ever typing an account number.
+
+    A document that already belongs to an account keeps it. The natural key
+    includes the masked number, so a re-read that finally manages to see one
+    resolved to a *different* account than the first read did — and because a
+    transaction's fingerprint is scoped to its account, every row was written
+    again under the new one while the old rows stayed in the report. One
+    statement read twice became two accounts and two of every transaction.
+    What the re-read learns is used to fill in the account it already has,
+    never to move the statement to a new one.
     """
+    if document_id is not None:
+        owned = (
+            await session.execute(
+                text("SELECT account_id FROM documents WHERE id = :id"), {"id": document_id}
+            )
+        ).scalar_one_or_none()
+        if owned:
+            await session.execute(
+                text(
+                    "UPDATE accounts SET "
+                    "  institution = CASE WHEN institution = 'unknown' THEN CAST(:inst AS "
+                    "    institution) ELSE institution END, "
+                    "  masked_number = COALESCE(masked_number, :masked), "
+                    "  updated_at = now() "
+                    "WHERE id = :id"
+                ),
+                {"id": owned, "inst": institution.value, "masked": masked_number},
+            )
+            return uuid.UUID(str(owned))
+
     existing = (
         await session.execute(
             text(
@@ -303,7 +341,66 @@ async def upsert_statement(
     difference_paise: int | None,
     engine: ParseEngine,
 ) -> uuid.UUID:
-    """One statement row per account and period. A re-parse updates it."""
+    """One statement row per document. A re-parse updates it in place.
+
+    Keyed on the document first, and only then on the account and period.
+    Keyed on the period alone, a re-read whose rows start a day earlier — or
+    one that landed on a different account — inserted a second statement and
+    left the first behind, still reconciled and still feeding the report. The
+    document is the thing that was read, so it is the thing that owns the row.
+    """
+    mine, *extra = (
+        (
+            await session.execute(
+                text("SELECT id FROM statements WHERE document_id = :did ORDER BY created_at"),
+                {"did": document_id},
+            )
+        )
+        .scalars()
+        .all()
+    ) or [None]
+
+    if extra:
+        # A ledger written before this was keyed on the document can hold
+        # several statements for one file — that was the bug. Their rows are
+        # the duplicates on screen, and `converge_transactions` is about to
+        # write the real set onto the one being kept.
+        #
+        # Deleted outright, not left to the foreign key: it is ON DELETE SET
+        # NULL, and a transaction with no statement is *published* — the
+        # duplicates would survive the statement that explains them.
+        await session.execute(
+            text("DELETE FROM transactions WHERE statement_id = ANY(:ids)"), {"ids": extra}
+        )
+        await session.execute(text("DELETE FROM statements WHERE id = ANY(:ids)"), {"ids": extra})
+        logger.info(
+            "collapsed_duplicate_statements",
+            document_id=str(document_id),
+            removed=len(extra),
+        )
+
+    if mine is not None:
+        await session.execute(
+            text(
+                "UPDATE statements SET account_id = :aid, period_start = :ps, period_end = :pe, "
+                "  opening_balance = :ob, closing_balance = :cb, reconciled = :rec, "
+                "  reconcile_difference = :diff, parse_engine = :eng, updated_at = now() "
+                "WHERE id = :id"
+            ),
+            {
+                "id": mine,
+                "aid": account_id,
+                "ps": period_start,
+                "pe": period_end,
+                "ob": opening_paise,
+                "cb": closing_paise,
+                "rec": reconciled,
+                "diff": difference_paise,
+                "eng": engine.value,
+            },
+        )
+        return uuid.UUID(str(mine))
+
     row = (
         await session.execute(
             text(
@@ -353,7 +450,40 @@ async def process_document(
     institution: Institution = Institution.UNKNOWN,
     account_type: AccountType = AccountType.SAVINGS,
 ) -> StatementResult:
-    """Run one document from bytes to ledger."""
+    """Run one document from bytes to ledger.
+
+    Whatever happens, the page counter is taken down on the way out: a stale
+    "Page 3 of 6" against a document that failed ten minutes ago is worse than
+    no number at all.
+    """
+    try:
+        return await _run(
+            session,
+            document_id=document_id,
+            user_id=user_id,
+            settings=settings,
+            data=data,
+            typed_password=typed_password,
+            remember_password=remember_password,
+            institution=institution,
+            account_type=account_type,
+        )
+    finally:
+        progress.clear(str(document_id))
+
+
+async def _run(
+    session: AsyncSession,
+    *,
+    document_id: uuid.UUID,
+    user_id: str,
+    settings: Settings,
+    data: bytes,
+    typed_password: str | None,
+    remember_password: bool,
+    institution: Institution,
+    account_type: AccountType,
+) -> StatementResult:
     log = logger.bind(document_id=str(document_id))
 
     await session.execute(
@@ -364,8 +494,19 @@ async def process_document(
     candidates = await password_candidates(
         session, user_id=user_id, settings=settings, typed=typed_password
     )
+
+    # Published page by page while the parse runs, so the upload screen can
+    # say "Page 3 of 6" instead of spinning at nothing.
+    def _page(page: int, total: int) -> None:
+        progress.advance(str(document_id), page, total)
+
+    # In a thread: pdfplumber is synchronous and a twelve-page statement holds
+    # the loop for seconds. Run inline, the upload screen cannot even ask how
+    # far it has got until the parse it is asking about has finished.
     try:
-        document, used_password, tries = open_with_ladder(data, candidates)
+        document, used_password, tries = await asyncio.to_thread(
+            open_with_ladder, data, candidates, on_page=_page
+        )
     except PdfUnreadableError as exc:
         await _fail(session, document_id, f"not a readable PDF: {exc}")
         return StatementResult(status=DocumentStatus.FAILED, error=str(exc))
@@ -427,6 +568,7 @@ async def process_document(
         institution=institution,
         account_type=account_type,
         masked_number=hint.masked_number,
+        document_id=document_id,
     )
     statement_id = await upsert_statement(
         session,

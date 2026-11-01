@@ -670,8 +670,96 @@ async def enrich_user(
         )
         updated += 1
 
-    logger.info("enriched", user_id=user_id, transactions=updated)
+    paired = await pair_own_transfers(session, user_id=user_id, ctx=ctx)
+
+    logger.info("enriched", user_id=user_id, transactions=updated, transfer_pairs=paired)
     return updated
 
 
-__all__ = ["UNCATEGORIZED_SLUG", "Context", "Label", "classify", "enrich_user", "load_context"]
+#: A UPI UTR is 12 digits, NEFT and IMPS references run from 9 to 14. Shorter
+#: than 9 and it is a time or an amount; longer and it is a card number.
+REFERENCE_DIGITS = (9, 14)
+
+#: How far apart the two legs may be dated. The same transfer is stamped by
+#: two banks, and a weekend between them is normal.
+PAIR_WINDOW_DAYS = 3
+
+#: Both legs of one transfer, found by the reference the banks printed on each.
+_PAIR_SQL = """
+WITH refs AS (
+  SELECT t.id, t.account_id, t.txn_date, t.amount_paise, t.direction, tok AS ref
+  FROM transactions t,
+       LATERAL regexp_split_to_table(t.raw_description, '[^0-9]+') AS tok
+  WHERE length(tok) BETWEEN :min_digits AND :max_digits
+    AND t.category_source IS DISTINCT FROM 'user_rule'
+),
+pairs AS (
+  SELECT d.id AS debit_id, c.id AS credit_id
+  FROM refs d
+  JOIN refs c
+    ON c.ref = d.ref
+   AND d.direction = 'debit'
+   AND c.direction = 'credit'
+   AND c.amount_paise = d.amount_paise
+   AND c.account_id <> d.account_id
+   AND c.txn_date BETWEEN d.txn_date - :days AND d.txn_date + :days
+)
+UPDATE transactions t
+   SET is_transfer = true,
+       category_id = :cat,
+       category_source = 'own_transfer_pair',
+       category_confidence = 1.0,
+       updated_at = now()
+ WHERE t.id IN (SELECT debit_id FROM pairs UNION SELECT credit_id FROM pairs)
+   AND t.category_source IS DISTINCT FROM 'user_rule'
+   AND (t.is_transfer IS NOT TRUE OR t.category_id IS DISTINCT FROM :cat)
+RETURNING t.id
+"""
+
+
+async def pair_own_transfers(session: AsyncSession, *, user_id: str, ctx: Context) -> int:
+    """Money moved between the user's own accounts, seen from both sides.
+
+    One transfer reaches us as two rows: a debit on the account it left and a
+    credit on the account it arrived in. Counted as they stand, the month
+    shows spending that bought nothing and income that earned nothing — and
+    the same ten thousand rupees twice.
+
+    Neither row says "transfer" anywhere; what ties them together is the
+    reference the banks print on both. Amount and direction alone are not
+    enough and must never be used on their own: over six months of real
+    statements that rule paired rent with a refund, and a cash withdrawal
+    with a friend repaying a loan — twenty-two pairs, of which one was real.
+
+    Runs after the ladder so it has the last word, except over a category the
+    user set themselves. Re-running changes nothing, which is what lets it
+    sit at the end of every parse.
+    """
+    category_id = ctx.category_ids.get("transfers_own")
+    if category_id is None:
+        return 0
+
+    rows = await session.execute(
+        text(_PAIR_SQL),
+        {
+            "cat": category_id,
+            "min_digits": REFERENCE_DIGITS[0],
+            "max_digits": REFERENCE_DIGITS[1],
+            "days": PAIR_WINDOW_DAYS,
+        },
+    )
+    paired = len(rows.all())
+    if paired:
+        logger.info("own_transfers_paired", user_id=user_id, transactions=paired)
+    return paired
+
+
+__all__ = [
+    "UNCATEGORIZED_SLUG",
+    "Context",
+    "Label",
+    "classify",
+    "enrich_user",
+    "load_context",
+    "pair_own_transfers",
+]
