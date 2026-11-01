@@ -1,14 +1,20 @@
 """Test fixtures.
 
 Tests run against a dedicated `todd_py_test` database, created and migrated on
-first use. Never the development database: these tests delete rows.
+first use, and write their statements to a dedicated temporary directory.
+Never the development database and never the development storage: these tests
+delete rows, and one of them erases an account — which deletes every file
+under that tenant's prefix. Sharing either with development means a test run
+destroys the statements you uploaded by hand.
 """
 
 from __future__ import annotations
 
 import os
+import tempfile
 import uuid
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 
 import psycopg
 import pytest
@@ -19,10 +25,18 @@ from todd.config import Settings
 TEST_DB = "todd_py_test"
 
 
+#: One directory per run, outside the project, so nothing a test deletes can
+#: be a file development put there.
+STORAGE_DIR = Path(tempfile.gettempdir()) / "todd-py-test-storage"
+
+
 def _test_settings() -> Settings:
     base = Settings(_env_file=".env")  # type: ignore[call-arg]
     url = base.database_url.rsplit("/", 1)[0] + f"/{TEST_DB}"
-    return base.model_copy(update={"database_url": url, "app_env": "test"})
+    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    return base.model_copy(
+        update={"database_url": url, "app_env": "test", "storage_dir": str(STORAGE_DIR)}
+    )
 
 
 @pytest.fixture(scope="session")

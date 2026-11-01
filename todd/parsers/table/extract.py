@@ -279,42 +279,84 @@ def is_continuation(line: TextLine, text_span: tuple[float, float]) -> bool:
     return bool(inside) and len(inside) >= len(line.words) / 2
 
 
+#: How many wrapped lines one narration may claim. Real narration runs to a
+#: few lines; a longer run is a footer or an address block that happened to
+#: pass the content tests.
+MAX_CONTINUATION_LINES = 4
+
+#: How far a wrapped line may sit from the row it belongs to, in points. A
+#: line further away than a few rows is not that row's narration, whatever is
+#: nearest to it.
+MAX_CONTINUATION_GAP = 60.0
+
+
 def attach_continuations(
     rows: list[ExtractedRow],
     all_lines: Sequence[TextLine],
     text_span: tuple[float, float],
 ) -> None:
-    """Fold wrapped narration into the row below it.
+    """Fold wrapped narration into the row it belongs to.
 
     A statement line with no date is not a transaction; it is the rest of a
-    neighbouring description. This is what turns
+    neighbouring description. Which neighbour is not a question of layout
+    convention but of distance, because both conventions are real — the date
+    can sit at the top of its block or at the bottom:
 
-        NEVATHA
-        UPI/NEVATHA/itsnevatha@oka/Rent/ICICI
-        01-09-2026 10,000.00 73,449.48
+        NEVATHA                                 30-08-2026 NIRANJAN G    10,000.00
+        UPI/NEVATHA/itsnevatha@oka/Rent                    UPI/NIRANJAN G/niranjan…
+        01-09-2026 10,000.00 73,449.48                     BA/128760269541/HDF…
 
-    into one row carrying its full narration.
+    So a wrapped line joins the dated row whose baseline is nearest to it, and
+    nothing else. Folding every line upward truncated the second kind at its
+    first line; folding every line downward made each row swallow the head of
+    the one after it, which is how a ten thousand rupee transfer between two
+    of the user's own accounts came to be labelled "Pricewaterhouse Coopers" —
+    the first words of the salary credit printed below it.
     """
     if not rows:
         return
+
     by_page: dict[int, list[TextLine]] = {}
     for line in all_lines:
         by_page.setdefault(line.page, []).append(line)
 
+    owner: dict[tuple[int, str], ExtractedRow] = {}
     for row in rows:
-        page_lines = by_page.get(row.page, [])
-        anchor = next(
-            (i for i, line in enumerate(page_lines) if line.text in row.source_lines), None
-        )
-        if anchor is None:
+        for source in row.source_lines:
+            owner.setdefault((row.page, source), row)
+
+    for page, page_lines in by_page.items():
+        anchors = [
+            (line.top, owned)
+            for line in page_lines
+            if (owned := owner.get((page, line.text))) is not None
+        ]
+        if not anchors:
             continue
-        extra: list[str] = []
-        for line in reversed(page_lines[max(0, anchor - 3) : anchor]):
+
+        before: dict[int, list[str]] = {}
+        after: dict[int, list[str]] = {}
+
+        for line in page_lines:
+            if (page, line.text) in owner:
+                continue
             if looks_like_data_row(line) or not is_continuation(line, text_span):
-                break
-            extra.insert(0, line.text)
-        if extra:
-            row.description = " ".join([*extra, row.description]).strip()
+                continue
+
+            top, nearest = min(anchors, key=lambda a: (abs(a[0] - line.top), a[0] > line.top))
+            if abs(top - line.top) > MAX_CONTINUATION_GAP:
+                continue
+
+            side = before if line.top < top else after
+            side.setdefault(id(nearest), []).append(line.text)
+
+        for row in rows:
+            if row.page != page:
+                continue
+            head = before.get(id(row), [])[-MAX_CONTINUATION_LINES:]
+            tail = after.get(id(row), [])[:MAX_CONTINUATION_LINES]
+            if head or tail:
+                row.description = " ".join([*head, row.description, *tail]).strip()
 
 
 def _implausible(rows: Sequence[ExtractedRow]) -> str | None:

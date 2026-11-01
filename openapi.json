@@ -183,6 +183,58 @@
         "title": "CategoryTransactionsResponse",
         "type": "object"
       },
+      "DeleteAccountResponse": {
+        "properties": {
+          "deleted": {
+            "const": true,
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "removed": {
+            "$ref": "#/components/schemas/DeletedCounts"
+          }
+        },
+        "required": [
+          "removed"
+        ],
+        "title": "DeleteAccountResponse",
+        "type": "object"
+      },
+      "DeletedCounts": {
+        "description": "What the erasure removed, counted before it happened.\n\nThe screen says it out loud \u2014 \"294 transactions, 16 statements and 16\nfiles removed\" \u2014 because an erasure that answers `{\"deleted\": true}` and\nnothing else asks the user to take our word for it.",
+        "properties": {
+          "accounts": {
+            "title": "Accounts",
+            "type": "integer"
+          },
+          "documents": {
+            "title": "Documents",
+            "type": "integer"
+          },
+          "files": {
+            "title": "Files",
+            "type": "integer"
+          },
+          "statements": {
+            "title": "Statements",
+            "type": "integer"
+          },
+          "transactions": {
+            "title": "Transactions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "transactions",
+          "statements",
+          "accounts",
+          "documents",
+          "files"
+        ],
+        "title": "DeletedCounts",
+        "type": "object"
+      },
       "Direction": {
         "enum": [
           "debit",
@@ -242,6 +294,74 @@
         ],
         "title": "DocumentOut",
         "type": "object"
+      },
+      "DocumentProgress": {
+        "properties": {
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "pageCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pagecount"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DocumentStatus"
+          },
+          "statusLabel": {
+            "title": "Statuslabel",
+            "type": "string"
+          },
+          "transactionsAdded": {
+            "title": "Transactionsadded",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "status",
+          "statusLabel",
+          "transactionsAdded",
+          "page",
+          "pageCount"
+        ],
+        "title": "DocumentProgress",
+        "type": "object"
+      },
+      "DocumentStatus": {
+        "enum": [
+          "queued",
+          "locked",
+          "parsing",
+          "needs_review",
+          "done",
+          "failed"
+        ],
+        "title": "DocumentStatus",
+        "type": "string"
       },
       "EmailConnectionStatus": {
         "enum": [
@@ -756,6 +876,21 @@
       },
       "MonthlySpend": {
         "properties": {
+          "complete": {
+            "default": true,
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "covered": {
+            "default": true,
+            "title": "Covered",
+            "type": "boolean"
+          },
+          "inWindow": {
+            "default": true,
+            "title": "Inwindow",
+            "type": "boolean"
+          },
           "month": {
             "title": "Month",
             "type": "string"
@@ -864,6 +999,25 @@
         "title": "ProfileResponse",
         "type": "object"
       },
+      "QueuedDocument": {
+        "description": "A file now on disk, named so the screen can follow it.",
+        "properties": {
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "filename"
+        ],
+        "title": "QueuedDocument",
+        "type": "object"
+      },
       "ReportResponse": {
         "properties": {
           "availableWindows": {
@@ -968,6 +1122,17 @@
             "title": "Moneyinpaise",
             "type": "integer"
           },
+          "savedPaise": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Savedpaise"
+          },
           "savedPctOfIncome": {
             "anyOf": [
               {
@@ -987,6 +1152,7 @@
         "required": [
           "spentPaise",
           "moneyInPaise",
+          "savedPaise",
           "savedPctOfIncome"
         ],
         "title": "ReportTotals",
@@ -994,17 +1160,29 @@
       },
       "ReportWindow": {
         "properties": {
+          "dayCount": {
+            "title": "Daycount",
+            "type": "integer"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "exact": {
+            "default": false,
+            "title": "Exact",
+            "type": "boolean"
+          },
+          "incompleteMonths": {
+            "default": 0,
+            "title": "Incompletemonths",
+            "type": "integer"
+          },
           "label": {
             "title": "Label",
             "type": "string"
           },
           "monthCount": {
-            "enum": [
-              1,
-              3,
-              6,
-              12
-            ],
             "title": "Monthcount",
             "type": "integer"
           },
@@ -1014,12 +1192,19 @@
             },
             "title": "Months",
             "type": "array"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
           }
         },
         "required": [
           "months",
           "label",
-          "monthCount"
+          "monthCount",
+          "start",
+          "end",
+          "dayCount"
         ],
         "title": "ReportWindow",
         "type": "object"
@@ -1183,8 +1368,15 @@
       "UnlockRequest": {
         "properties": {
           "accountId": {
-            "title": "Accountid",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accountid"
           },
           "password": {
             "minLength": 1,
@@ -1198,7 +1390,6 @@
           }
         },
         "required": [
-          "accountId",
           "password"
         ],
         "title": "UnlockRequest",
@@ -1222,25 +1413,66 @@
         "title": "UnlockResponse",
         "type": "object"
       },
+      "UploadProgressResponse": {
+        "properties": {
+          "busy": {
+            "title": "Busy",
+            "type": "boolean"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentProgress"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "nowReading": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nowreading"
+          },
+          "transactionsAdded": {
+            "title": "Transactionsadded",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "busy",
+          "nowReading",
+          "documents",
+          "transactionsAdded"
+        ],
+        "title": "UploadProgressResponse",
+        "type": "object"
+      },
       "UploadResponse": {
         "properties": {
           "accepted": {
             "title": "Accepted",
             "type": "integer"
           },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/QueuedDocument"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
           "duplicates": {
             "title": "Duplicates",
-            "type": "integer"
-          },
-          "locked": {
-            "title": "Locked",
             "type": "integer"
           }
         },
         "required": [
           "accepted",
-          "locked",
-          "duplicates"
+          "duplicates",
+          "documents"
         ],
         "title": "UploadResponse",
         "type": "object"
@@ -1348,6 +1580,28 @@
         ]
       }
     },
+    "/v1/account": {
+      "delete": {
+        "description": "Irreversible, and deliberately not a soft delete.\n\nThere is no undo and nothing is kept back: a \"delete\" that hides rows is\nnot the thing the screen says it is.\n\nUnder the dev bypass the account comes back \u2014 empty \u2014 on the very next\nrequest, because the bypass user is created on demand. That is what makes\nthis a reset in development and an erasure in production, from one call.",
+        "operationId": "delete_account_v1_account_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteAccountResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Erase every statement, transaction and file",
+        "tags": [
+          "account"
+        ]
+      }
+    },
     "/v1/categories": {
       "get": {
         "description": "Every category a transaction can be moved into, in display order.",
@@ -1385,21 +1639,75 @@
             }
           },
           {
-            "description": "1, 3, 6 or 12.",
+            "description": "1, 3, 6, 12 or 'all'.",
             "in": "query",
             "name": "months",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "integer"
+                  "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "1, 3, 6 or 12.",
+              "description": "1, 3, 6, 12 or 'all'.",
               "title": "Months"
+            }
+          },
+          {
+            "description": "One month, as 2026-04. Beats `months`.",
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One month, as 2026-04. Beats `months`.",
+              "title": "Month"
+            }
+          },
+          {
+            "description": "First day, as 2026-07-30. Beats everything else.",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "First day, as 2026-07-30. Beats everything else.",
+              "title": "From"
+            }
+          },
+          {
+            "description": "Last day, as 2026-09-30.",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Last day, as 2026-09-30.",
+              "title": "To"
             }
           },
           {
@@ -1495,7 +1803,7 @@
         ]
       },
       "post": {
-        "description": "Store each PDF, then parse it.\n\nCounts answer the three things the web app distinguishes: accepted,\nwaiting on a password, and already seen. A duplicate is identified by\ncontent hash, so the same statement forwarded twice is one document.",
+        "description": "Store each PDF, then read it in the background.\n\nStoring is fast; reading a twelve-page statement is not. Parsing inside\nthe request meant the browser held a POST open for a minute with nothing\nto show, and a phone that slept killed the upload. So this answers as soon\nas the files are on disk, and the screen follows them through\n`/v1/documents/progress`.\n\nA duplicate is identified by content hash, so the same statement forwarded\ntwice is one document.",
         "operationId": "upload_documents_v1_documents_post",
         "requestBody": {
           "content": {
@@ -1530,6 +1838,58 @@
           }
         },
         "summary": "Upload statement PDFs",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/v1/documents/progress": {
+      "get": {
+        "description": "What the upload screen polls while it reads.\n\nScoped to the ids the client was handed at upload, so the screen shows the\nfiles that person just chose and not every statement they have ever added.",
+        "operationId": "upload_progress_v1_documents_progress_get",
+        "parameters": [
+          {
+            "description": "Comma-separated document ids.",
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated document ids.",
+              "title": "Ids"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadProgressResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "How far the upload has got",
         "tags": [
           "documents"
         ]
@@ -1789,21 +2149,75 @@
         "operationId": "get_report_v1_report_get",
         "parameters": [
           {
-            "description": "1, 3, 6 or 12. Omit for the saved one.",
+            "description": "1, 3, 6, 12 or 'all'. Omit for the saved one.",
             "in": "query",
             "name": "months",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "integer"
+                  "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "1, 3, 6 or 12. Omit for the saved one.",
+              "description": "1, 3, 6, 12 or 'all'. Omit for the saved one.",
               "title": "Months"
+            }
+          },
+          {
+            "description": "One month, as 2026-04. Beats `months`.",
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One month, as 2026-04. Beats `months`.",
+              "title": "Month"
+            }
+          },
+          {
+            "description": "First day, as 2026-07-30. With `to`, beats everything else.",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "First day, as 2026-07-30. With `to`, beats everything else.",
+              "title": "From"
+            }
+          },
+          {
+            "description": "Last day, as 2026-09-30.",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Last day, as 2026-09-30.",
+              "title": "To"
             }
           }
         ],

@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     supabase_service_role_key: str | None = None
     supabase_jwt_secret: str | None = None
     supabase_storage_bucket: str = "statements"
+    #: Where development statements are written. Settable so a test run can
+    #: have its own: the suite erases accounts, and an erasure deletes the
+    #: files under the tenant's prefix — in a shared directory those are the
+    #: developer's own uploaded PDFs.
+    storage_dir: str = ".todd-storage"
 
     # ---- google / gmail
     google_client_id: str | None = None

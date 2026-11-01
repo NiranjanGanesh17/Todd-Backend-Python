@@ -21,6 +21,7 @@ from todd.schemas.enums import (
     AccountType,
     CategoryKind,
     Direction,
+    DocumentStatus,
     EmailConnectionStatus,
     InsightStatus,
     LockMode,
@@ -36,6 +37,9 @@ __all__ = [
     "CategoryOption",
     "CategoryTransactionsResponse",
     "CheckState",
+    "DeleteAccountResponse",
+    "DeletedCounts",
+    "DocumentProgress",
     "FileTransactionRequest",
     "FileTransactionResponse",
     "GmailConnectResponse",
@@ -46,10 +50,12 @@ __all__ = [
     "IncomeSource",
     "InsightOut",
     "ProfileResponse",
+    "QueuedDocument",
     "ReportResponse",
     "TransactionOut",
     "UnlockRequest",
     "UnlockResponse",
+    "UploadProgressResponse",
     "UploadResponse",
     "WaitlistResponse",
 ]
@@ -92,7 +98,22 @@ class InsightOut(ApiModel):
 class ReportWindow(ApiModel):
     months: list[str]
     label: str
-    month_count: AnalysisWindow
+    #: Any length, not one of the four presets: "All" spans whatever the
+    #: statements cover, and a single month is a window of one.
+    month_count: int
+    #: How many months in this range have statements but not from every
+    #: account — the figures are real but short of the whole picture.
+    incomplete_months: int = 0
+    #: The days the figures are actually counted over, inclusive. For a preset
+    #: or a single month these are that month's own ends; for a range the user
+    #: drew they are the days they drew.
+    start: str
+    end: str
+    day_count: int
+    #: True when the user picked the days themselves. The screen says "Days"
+    #: rather than "Months" for one, because "3 months" for 30 Jul – 30 Sep is
+    #: a count of months touched, not of anything the user asked for.
+    exact: bool = False
 
 
 class LockedAccount(ApiModel):
@@ -104,12 +125,27 @@ class LockedAccount(ApiModel):
 class ReportTotals(ApiModel):
     spent_paise: int
     money_in_paise: int
+    #: What was kept: money in minus money out. Negative when the window spent
+    #: more than it took in. Null — like the percentage below — when nothing
+    #: came in at all: statements that show only spending cannot tell us
+    #: whether anything was saved, and "you overspent everything" would be a
+    #: claim about the statements we hold rather than about the money.
+    saved_paise: int | None
     saved_pct_of_income: float | None
 
 
 class MonthlySpend(ApiModel):
     month: str
     total_paise: int
+    #: False when no statement covers this month at all. The chart draws those
+    #: as empty outlines: a zero bar and "we have nothing for March" are not
+    #: the same statement, and must not look the same.
+    covered: bool = True
+    #: False when some account is missing a statement for this month.
+    complete: bool = True
+    #: False for the months the chart offers but the figures exclude — the
+    #: strip is a picker, so it reaches past the window being shown.
+    in_window: bool = True
 
 
 class BiggestMonth(ApiModel):
@@ -185,6 +221,27 @@ class ProfileResponse(ApiModel):
     gmail: GmailSummary
 
 
+class DeletedCounts(ApiModel):
+    """What the erasure removed, counted before it happened.
+
+    The screen says it out loud — "294 transactions, 16 statements and 16
+    files removed" — because an erasure that answers `{"deleted": true}` and
+    nothing else asks the user to take our word for it.
+    """
+
+    transactions: int
+    statements: int
+    accounts: int
+    documents: int
+    #: Stored PDFs. Counted by the storage layer, not the database.
+    files: int
+
+
+class DeleteAccountResponse(ApiModel):
+    deleted: Literal[True] = True
+    removed: DeletedCounts
+
+
 # ------------------------------------------------------------------- gmail
 
 
@@ -221,15 +278,50 @@ class GmailConnectResponse(ApiModel):
 # --------------------------------------------------------------- documents
 
 
+class QueuedDocument(ApiModel):
+    """A file now on disk, named so the screen can follow it."""
+
+    id: str
+    filename: str
+
+
 class UploadResponse(ApiModel):
+    #: Files stored and queued. Parsing happens after this response, so this
+    #: is "we have them", not "we have read them" — the upload screen polls
+    #: `/v1/documents/progress` for the rest.
     accepted: int
-    #: Files that opened straight away, versus ones waiting on a password.
-    locked: int
     duplicates: int
+    documents: list[QueuedDocument]
+
+
+class DocumentProgress(ApiModel):
+    id: str
+    filename: str
+    status: DocumentStatus
+    #: Server-written second line: "142 transactions added", "Page 3 of 6",
+    #: "Needs a password". Two clients cannot phrase it differently.
+    status_label: str
+    transactions_added: int
+    #: Only while a parse is running in this process, and only for a PDF
+    #: whose page count is known.
+    page: int | None
+    page_count: int | None
+
+
+class UploadProgressResponse(ApiModel):
+    #: True while any of these documents is queued or being read.
+    busy: bool
+    #: The file being read right now, for the line under the scanner.
+    now_reading: str | None
+    documents: list[DocumentProgress]
+    transactions_added: int
 
 
 class UnlockRequest(ApiModel):
-    account_id: str
+    #: Optional: `POST /v1/documents/{id}/unlock` names the file in the path,
+    #: and during an upload the account is exactly what is not known yet —
+    #: it is read out of the PDF once the password opens it.
+    account_id: str | None = None
     password: str = Field(min_length=1)
     #: Stored encrypted only when the user asks us to remember it.
     remember: bool = False
