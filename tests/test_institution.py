@@ -266,3 +266,56 @@ def test_a_page_that_opens_with_the_table_still_reads_something() -> None:
     """A continuation page has no header; counting lines is the fallback."""
     lines = ["Date Narration Debit Credit Balance", "A/c No : XXXXXXXX3424"]
     assert header_of(lines) == lines
+
+
+# ----------------------------------------------------- the bank, by its IFSC
+
+
+def test_ifsc_names_a_bank_the_enum_has_no_member_for():
+    """The six in `Institution` are the six with tuned parsers.
+
+    Everything else used to land on `unknown` and print "Unknown bank". The
+    IFSC's first four characters identify the bank exactly, and every Indian
+    statement prints one.
+    """
+    from todd.parsers.institution import detect_institution_name
+
+    assert detect_institution_name(["IFSC Code: IDFB0040101"]) == "IDFC FIRST Bank"
+    assert detect_institution_name(["IFSC: KVBL0001234"]) == "Karur Vysya Bank"
+    assert detect_institution_name(["ifsc fdrl0001234"]) == "Federal Bank"
+
+
+def test_ifsc_is_read_from_the_header_only():
+    """A narration names other people's banks.
+
+    "UPI/BINDU WINE/XX3657@okbizax/UPI/AXIS BANK/…" is in the table, not the
+    header, and `detect_account` only ever passes the header in.
+    """
+    from todd.parsers.institution import detect_account
+
+    header = [
+        "Statement of transactions in Savings Account 58740100001421 in INR",
+        "IFSC Code: IDFB0040101   MICR: 560751002",
+    ]
+    hint = detect_account(header)
+    assert hint.institution_name == "IDFC FIRST Bank"
+    # The enum stays honest: there is no IDFC member, so it is still unknown.
+    assert hint.institution is Institution.UNKNOWN
+    assert hint.masked_number == "1421"
+
+
+def test_an_unlisted_ifsc_names_nothing_rather_than_guessing():
+    from todd.parsers.institution import detect_institution_name
+
+    assert detect_institution_name(["IFSC: ZZZZ0001234"]) is None
+    assert detect_institution_name(["no code here at all"]) is None
+
+
+def test_a_header_with_no_bank_in_its_text_still_finds_one():
+    """The case that started this: the logo is an image, so the name is not text."""
+    from todd.parsers.institution import detect_account, detect_institution
+
+    bare = ["Statement of transactions in Savings Account 58740100001421 in INR"]
+    assert detect_institution("\n".join(bare).lower()) is Institution.UNKNOWN
+    assert detect_account(bare).institution_name is None
+    assert detect_account([*bare, "IFSC: UBIN0812345"]).institution_name == "Union Bank of India"

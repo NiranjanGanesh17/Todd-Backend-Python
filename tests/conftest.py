@@ -20,7 +20,7 @@ import psycopg
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from todd.config import Settings
+from todd.config import Settings, get_settings
 
 TEST_DB = "todd_py_test"
 
@@ -58,6 +58,11 @@ def _migrated_database(settings: Settings) -> Iterator[None]:
 
     cfg = Config("alembic.ini")
     os.environ["DATABASE_URL"] = settings.database_url
+    # `migrations/env.py` reads the URL through `get_settings()`, which is
+    # cached for the life of the process. Without clearing it the upgrade
+    # runs against whatever was resolved first — the development database,
+    # from `.env` — and the test database quietly stays a version behind.
+    get_settings.cache_clear()
     command.upgrade(cfg, "head")
 
     # Categories and the merchant dictionary are reference data the ladder

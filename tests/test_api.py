@@ -200,7 +200,15 @@ async def test_profile_sends_the_display_label_not_the_slug(client: AsyncClient)
     # the short form or the line wraps on a phone.
     assert short_institution("icici") == "ICICI"
     assert short_institution("sbi") == "SBI"
-    assert short_institution(None) == "Unknown bank"
+    # A name read off the statement's IFSC beats the enum, which has six
+    # members and calls every other bank `unknown`.
+    assert short_institution("unknown", "IDFC FIRST Bank") == "IDFC FIRST Bank"
+    assert short_institution("icici", "ICICI Bank") == "ICICI Bank"
+    # With neither, nothing — the row reads "Savings ··1421". It used to read
+    # "Unknown bank Savings ··1421", which is a claim about the user's bank
+    # rather than about our parser.
+    assert short_institution(None) == ""
+    assert short_institution("unknown") == ""
     body = (await client.get("/v1/profile")).json()
     assert body["gmail"] == {"connected": False, "email": None}
 
@@ -353,6 +361,8 @@ async def test_openapi_matches_the_node_operation_set(client: AsyncClient) -> No
         "GET /v1/categories/{slug}/transactions",
         "GET /v1/categories",
         "POST /v1/transactions/{transaction_id}/category",
+        "GET /v1/transactions/{transaction_id}",
+        "PATCH /v1/transactions/{transaction_id}",
         "GET /v1/documents/progress",
         "DELETE /v1/account",
     }
@@ -1109,3 +1119,255 @@ async def test_uploading_a_file_we_lost_puts_it_back(
     assert again["duplicates"] == 1
     assert again["documents"][0]["id"] == first["documents"][0]["id"], "still one document"
     assert storage.exists(key), "the file is back"
+
+
+# ------------------------------------------------------ icons on categories
+
+
+async def test_every_category_offered_carries_an_icon(client: AsyncClient) -> None:
+    """The chips are drawn from this list, so a category with no icon is a
+    chip with a hole in it. Written server-side (§6) so the "file under"
+    chips, the ranked list and the drill-down header cannot differ."""
+    body = (await client.get("/v1/categories")).json()
+    assert body["categories"]
+    for category in body["categories"]:
+        assert category["icon"], category["slug"]
+        assert category["icon"] == category["icon"].lower()
+
+
+async def test_the_report_names_an_icon_for_every_line(
+    client: AsyncClient, settings: Settings
+) -> None:
+    await _spend_on(settings, [("2026-08-10", 300_00)])
+    await _spend_on(settings, [("2026-08-01", 900_00)], direction="credit", institution="bob")
+
+    report = (await client.get("/v1/report?month=2026-08")).json()
+    for line in [*report["categories"], *report["incomeSources"]]:
+        assert line["icon"], line["slug"]
+
+
+async def test_not_knowing_is_not_a_category_and_does_not_look_like_one(
+    client: AsyncClient,
+) -> None:
+    """ "We could not place this" must not be drawn as a decision somebody
+    made, so the question mark belongs to the uncategorised bucket alone."""
+    bucket = (await client.get("/v1/categories/uncategorized/transactions")).json()
+    assert bucket["icon"] == "circle-help"
+
+    offered = (await client.get("/v1/categories")).json()["categories"]
+    assert all(category["icon"] != "circle-help" for category in offered)
+
+
+# ------------------------------------------------- one transaction, in full
+
+
+async def _row_from_a_statement(settings: Settings) -> str:
+    """A publishable row that came out of a named file, like a real one did.
+
+    `_spend_on` makes rows with no statement behind them, which is the alert
+    case. The detail screen's last card is the file, so it needs the other.
+    """
+    import datetime as dt
+
+    from sqlalchemy import text
+    from todd.db.session import get_sessionmaker, with_user
+
+    user_id = settings.auth_dev_user_id
+    async with get_sessionmaker()() as session, session.begin():
+        await session.execute(
+            text("INSERT INTO users (id, email) VALUES (:id, :email) ON CONFLICT DO NOTHING"),
+            {"id": uuid.UUID(user_id), "email": settings.auth_dev_user_email},
+        )
+
+    async with (
+        get_sessionmaker()() as session,
+        session.begin(),
+        with_user(session, user_id) as scoped,
+    ):
+        uid = uuid.UUID(user_id)
+        account = (
+            await scoped.execute(
+                text(
+                    "INSERT INTO accounts (user_id, institution, type, masked_number) "
+                    "VALUES (:uid, 'icici', 'credit_card', '9012') RETURNING id"
+                ),
+                {"uid": uid},
+            )
+        ).scalar_one()
+        document = (
+            await scoped.execute(
+                text(
+                    "INSERT INTO documents (user_id, account_id, filename, storage_key, "
+                    "  sha256, status) VALUES (:uid, :aid, 'ICICI_Card_Sep.pdf', 'k', :sha, "
+                    "  'done') RETURNING id"
+                ),
+                {"uid": uid, "aid": account, "sha": uuid.uuid4().hex},
+            )
+        ).scalar_one()
+        statement = (
+            await scoped.execute(
+                text(
+                    "INSERT INTO statements (user_id, account_id, document_id, period_start, "
+                    "  period_end, reconciled) VALUES (:uid, :aid, :did, :start, :end, true) "
+                    "RETURNING id"
+                ),
+                {
+                    "uid": uid,
+                    "aid": account,
+                    "did": document,
+                    "start": dt.date(2026, 8, 19),
+                    "end": dt.date(2026, 9, 18),
+                },
+            )
+        ).scalar_one()
+        txn = (
+            await scoped.execute(
+                text(
+                    "INSERT INTO transactions (user_id, account_id, statement_id, source, "
+                    "  txn_date, amount_paise, direction, raw_description, ref_no, "
+                    "  fingerprint) VALUES (:uid, :aid, :sid, 'statement', :d, 240000, "
+                    "  'debit', 'POS 4471 MKT*GROCERY MART MUMBAI IN', '005512349901', :fp) "
+                    "RETURNING id"
+                ),
+                {
+                    "uid": uid,
+                    "aid": account,
+                    "sid": statement,
+                    "d": dt.date(2026, 9, 18),
+                    "fp": uuid.uuid4().hex,
+                },
+            )
+        ).scalar_one()
+    return str(txn)
+
+
+async def test_the_detail_screen_shows_the_same_row_the_list_did(
+    client: AsyncClient, settings: Settings
+) -> None:
+    """The screen it opens from and the screen it opens onto must agree."""
+    txn_id = await _row_from_a_statement(settings)
+
+    listed = (
+        await client.get("/v1/categories/uncategorized/transactions?months=all&limit=200")
+    ).json()["transactions"]
+    row = next(r for r in listed if r["id"] == txn_id)
+
+    detail = (await client.get(f"/v1/transactions/{txn_id}")).json()
+    assert detail["transaction"] == row
+
+
+async def test_the_detail_screen_says_where_the_row_came_from(
+    client: AsyncClient, settings: Settings
+) -> None:
+    """A row the user doubts is answered by naming the file, not by asking
+    them to trust the ledger."""
+    txn_id = await _row_from_a_statement(settings)
+
+    detail = (await client.get(f"/v1/transactions/{txn_id}")).json()
+    assert detail["dateLabel"] == "18 September 2026"
+    assert detail["accountLine"] == "ICICI Card ··9012"
+    assert detail["methodLabel"] == "Card · POS"
+    assert detail["refNo"] == "005512349901"
+    assert detail["typeLabel"] == "Debit"
+    assert detail["statement"]["filename"] == "ICICI_Card_Sep.pdf"
+    assert detail["statement"]["periodLabel"] == "Statement for 19 Aug – 18 Sep"
+
+
+async def test_the_account_line_never_carries_more_than_four_digits(
+    client: AsyncClient, settings: Settings
+) -> None:
+    """§12 — the mask is the whole number anyone ever sees."""
+    txn_id = await _row_from_a_statement(settings)
+    detail = (await client.get(f"/v1/transactions/{txn_id}")).json()
+    assert "9012" in detail["accountLine"]
+    assert detail["transaction"]["accountMasked"] == "9012"
+    assert len(detail["transaction"]["accountMasked"]) == 4
+
+
+async def test_an_unlabelled_row_says_so_rather_than_saying_nothing(
+    client: AsyncClient, settings: Settings
+) -> None:
+    """A category with no reason behind it is one the user cannot argue with,
+    and arguing with it is the whole point of the screen."""
+    txn_id = await _row_from_a_statement(settings)
+    detail = (await client.get(f"/v1/transactions/{txn_id}")).json()
+    assert detail["transaction"]["categorySlug"] == "uncategorized"
+    assert detail["categoryIcon"] == "circle-help"
+    assert detail["categoryNote"] == "We weren't sure about this one"
+
+
+async def test_the_future_rule_names_what_it_would_actually_match(
+    client: AsyncClient, settings: Settings
+) -> None:
+    """ "Do this for future UPI payments too" would file half the ledger. The
+    tick has to name the payee the rule is written against."""
+    txn_id = await _row_from_a_statement(settings)
+    detail = (await client.get(f"/v1/transactions/{txn_id}")).json()
+    label = detail["transaction"]["futureRuleLabel"]
+    assert label
+    assert label not in {"POS", "UPI", "NEFT"}
+
+
+async def test_a_note_survives_and_can_be_taken_back(
+    client: AsyncClient, settings: Settings
+) -> None:
+    txn_id = await _row_from_a_statement(settings)
+
+    saved = await client.patch(f"/v1/transactions/{txn_id}", json={"note": "The week's shop"})
+    assert saved.status_code == 200
+    assert saved.json()["note"] == "The week's shop"
+    assert (await client.get(f"/v1/transactions/{txn_id}")).json()["note"] == "The week's shop"
+
+    cleared = await client.patch(f"/v1/transactions/{txn_id}", json={"note": None})
+    assert cleared.json()["note"] is None
+
+
+async def test_a_field_left_out_of_the_patch_is_left_alone(
+    client: AsyncClient, settings: Settings
+) -> None:
+    """Otherwise "not a spend" silently wipes the note written a moment before."""
+    txn_id = await _row_from_a_statement(settings)
+    await client.patch(f"/v1/transactions/{txn_id}", json={"note": "Groceries, not a gadget"})
+
+    body = (await client.patch(f"/v1/transactions/{txn_id}", json={"isTransfer": True})).json()
+    assert body["note"] == "Groceries, not a gadget"
+    assert body["transaction"]["isTransfer"] is True
+
+
+async def test_not_a_spend_stops_counting_against_the_report(
+    client: AsyncClient, settings: Settings
+) -> None:
+    """It is not a delete: the row stays, because a statement that reconciles
+    has to keep reconciling after the user touches a screen."""
+    txn_id = await _row_from_a_statement(settings)
+    before = (await client.get("/v1/report?month=2026-09")).json()["totals"]["spentPaise"]
+
+    await client.patch(f"/v1/transactions/{txn_id}", json={"isTransfer": True})
+
+    after = (await client.get("/v1/report?month=2026-09")).json()["totals"]["spentPaise"]
+    assert after == before - 240000
+    assert (await client.get(f"/v1/transactions/{txn_id}")).status_code == 200, "still there"
+
+
+async def test_a_note_longer_than_the_column_is_refused(
+    client: AsyncClient, settings: Settings
+) -> None:
+    """422, not a driver error from a value that will not fit."""
+    txn_id = await _row_from_a_statement(settings)
+    response = await client.patch(f"/v1/transactions/{txn_id}", json={"note": "x" * 501})
+    assert response.status_code == 422
+
+
+async def test_opening_a_transaction_that_does_not_exist_is_a_clean_404(
+    client: AsyncClient,
+) -> None:
+    response = await client.get("/v1/transactions/00000000-0000-4000-8000-000000000009")
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
+
+
+async def test_a_malformed_id_on_the_detail_screen_is_a_400_not_a_500(
+    client: AsyncClient,
+) -> None:
+    assert (await client.get("/v1/transactions/not-a-uuid")).status_code == 400
+    assert (await client.patch("/v1/transactions/not-a-uuid", json={})).status_code == 400

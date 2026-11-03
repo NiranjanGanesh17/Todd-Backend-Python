@@ -52,9 +52,12 @@ __all__ = [
     "ProfileResponse",
     "QueuedDocument",
     "ReportResponse",
+    "TransactionDetailResponse",
     "TransactionOut",
+    "TransactionStatementSource",
     "UnlockRequest",
     "UnlockResponse",
+    "UpdateTransactionRequest",
     "UploadProgressResponse",
     "UploadResponse",
     "WaitlistResponse",
@@ -118,8 +121,15 @@ class ReportWindow(ApiModel):
 
 class LockedAccount(ApiModel):
     id: str
-    #: Short label for the banner, e.g. "ICICI card".
+    #: Short label for the dialog's heading, e.g. "ICICI card".
     label: str
+    #: The banner's whole sentence. Written here because what can truthfully
+    #: be said about a locked file depends on facts only this side holds —
+    #: how many there are, and when they were added — and the sentence
+    #: changes shape with them. The screen used to assemble it from `label`,
+    #: which for an upload with no readable bank fell back to the word
+    #: "locked" and produced "Your locked statements need a password".
+    message: str
 
 
 class ReportTotals(ApiModel):
@@ -156,6 +166,10 @@ class BiggestMonth(ApiModel):
 class CategoryTotal(ApiModel):
     slug: str
     name: str
+    #: A lucide icon name, kebab-case. Written here so the ranked list, the
+    #: drill-down header and the "file under" chips cannot draw the same
+    #: category three different ways (§6).
+    icon: str
     total_paise: int
     trend_pct: float | None
     #: How many transactions make up the total. The home screen prints it only
@@ -173,6 +187,7 @@ class IncomeSource(ApiModel):
 
     slug: str
     name: str
+    icon: str
     total_paise: int
     trend_pct: float | None
 
@@ -387,6 +402,11 @@ class TransactionOut(ApiModel):
     category_confidence: float | None
     is_transfer: bool
     account_label: str
+    #: What "do this for future … payments too" would actually match on — the
+    #: payee or the UPI address, never the rail. Null when nothing in the
+    #: narration identifies a counterparty: the tick is then hidden rather
+    #: than promising a rule we have no way to write.
+    future_rule_label: str | None
 
 
 class CategoryOption(ApiModel):
@@ -395,6 +415,8 @@ class CategoryOption(ApiModel):
     slug: str
     name: str
     kind: CategoryKind
+    #: A lucide icon name, kebab-case, for the chip.
+    icon: str
 
 
 class CategoriesResponse(ApiModel):
@@ -419,8 +441,72 @@ class FileTransactionResponse(ApiModel):
 class CategoryTransactionsResponse(ApiModel):
     slug: str
     name: str
+    icon: str
     window: ReportWindow
     total_paise: int
     #: Total rows matching, which may exceed those returned.
     count: int
     transactions: list[TransactionOut]
+
+
+# ----------------------------------------------- the transaction detail
+
+
+class TransactionStatementSource(ApiModel):
+    """The file this row was read out of.
+
+    The detail screen's last card: "From ICICI_Card_Sep.pdf — statement for
+    19 Aug – 18 Sep". A row the user doubts is answered by showing them where
+    it came from, not by asking them to trust the ledger.
+    """
+
+    document_id: str | None
+    statement_id: str | None
+    filename: str
+    #: Server-written, e.g. "Statement for 19 Aug – 18 Sep".
+    period_label: str
+
+
+class TransactionDetailResponse(ApiModel):
+    """Everything the one-transaction screen prints.
+
+    `transaction` is the same row the category list renders, so the screen it
+    was opened from and the screen it opens onto cannot disagree. The rest is
+    detail that only this screen has room for, written here rather than in
+    the client (§6).
+    """
+
+    transaction: TransactionOut
+    #: "18 September 2026". Spelled out: there is one date on this screen.
+    date_label: str
+    #: "ICICI Card ··9012" — the account line in Details.
+    account_line: str
+    #: How the money moved, as Details prints it: "Card · POS", "UPI".
+    method_label: str
+    #: What the bank's own reference number was, when it printed one.
+    ref_no: str | None
+    #: "Debit" or "Credit", capitalised for the Details table.
+    type_label: str
+    #: The icon for whatever the row is currently filed under.
+    category_icon: str
+    #: Why it is filed there: "We weren't sure about this one", "You filed
+    #: this one", "We recognised Swiggy". A label with no reason behind it is
+    #: a label the user cannot argue with.
+    category_note: str
+    #: The user's own note, or null. Set through `PATCH`.
+    note: str | None
+    statement: TransactionStatementSource | None
+
+
+class UpdateTransactionRequest(ApiModel):
+    """The two buttons at the foot of the detail screen.
+
+    Both fields are optional and a field left out is left alone — `note: null`
+    clears the note, no `note` key keeps it. "Not a spend" is
+    `isTransfer: true`: the row stays in the ledger and stops counting
+    against the report, which is what moving money between your own accounts
+    actually is.
+    """
+
+    note: str | None = Field(default=None, max_length=500)
+    is_transfer: bool | None = None

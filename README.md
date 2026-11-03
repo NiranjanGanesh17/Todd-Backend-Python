@@ -98,6 +98,11 @@ Steps 1–7 need no API keys and no network.
 | `GET /v1/goals` | locked Pro tab, reads `GOALS_ENABLED` / `PRO_LOCK_MODE` |
 | `GET /v1/gmail/status` | connection plus backfill progress |
 | `GET /v1/documents` | stored statements and their status |
+| `GET /v1/categories/{slug}/transactions` | the rows behind one bar on the report |
+| `GET /v1/categories` | the "file under" chips, each with its icon |
+| `GET /v1/transactions/{id}` | the detail screen: the row, its statement, why it is filed there |
+| `PATCH /v1/transactions/{id}` | "Add a note" and "Not a spend" |
+| `POST /v1/transactions/{id}/category` | file one row, and optionally every future one from the payee |
 
 The reads are real queries; with no statements ingested they correctly report
 an empty system. The writes — upload, unlock, Gmail OAuth — answer `501` with
@@ -107,6 +112,9 @@ PDF into a queue that cannot drain.
 ## Non-negotiable
 
 - Account numbers masked to **last 4 everywhere** — UI, logs, LLM prompts.
+- **Display strings are the server's**, icons included: a category is named,
+  drawn and explained the same way on every screen, because only one place
+  writes it.
 - **RLS on every user table**, with a test proving cross-tenant isolation.
   Every view declared `WITH (security_invoker = true)`.
 - PDF passwords used in memory and **discarded** unless the user asks to remember.

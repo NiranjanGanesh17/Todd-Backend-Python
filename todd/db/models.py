@@ -243,6 +243,9 @@ class Account(Base):
     type: Mapped[enums.AccountType] = mapped_column(
         pg_enum(enums.AccountType, "account_type"), nullable=False
     )
+    #: The name an IFSC resolved to, for banks `institution` has no member
+    #: for. Null falls back to the enum's own label.
+    institution_name: Mapped[str | None] = mapped_column(sa.String(60))
     masked_number: Mapped[str | None] = mapped_column(sa.String(4))
     nickname: Mapped[str | None] = mapped_column(sa.String(60))
     source: Mapped[enums.AccountSource] = mapped_column(
@@ -364,6 +367,9 @@ class Transaction(Base):
     category_source: Mapped[str | None] = mapped_column(sa.String(24))
     is_transfer: Mapped[bool] = mapped_column(sa.Boolean, server_default="false", nullable=False)
     is_recurring: Mapped[bool] = mapped_column(sa.Boolean, server_default="false", nullable=False)
+    #: The user's own line about this row, from the detail screen. Shown back
+    #: to them and nothing else: never prompted on, never matched against.
+    note: Mapped[str | None] = mapped_column(sa.String(500))
     superseded_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), sa.ForeignKey("transactions.id", ondelete="SET NULL")
     )

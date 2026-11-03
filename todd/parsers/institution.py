@@ -84,6 +84,78 @@ _MARKS: dict[Institution, tuple[tuple[str, int], ...]] = {
     ),
 }
 
+#: An IFSC code: four letters for the bank, a zero, then six for the branch.
+#: Every Indian bank prints one in the account block at the top of a
+#: statement, and the first four characters identify the bank with no
+#: ambiguity — which is the only thing on the page that does.
+#:
+#: The marks above are a closed list of six, because those six have parsers
+#: tuned to their layouts. The IFSC is how every *other* bank gets named: the
+#: logo is an image, `pdfplumber` reads no words out of it, and a statement
+#: whose header says "Statement of transactions in Savings Account …" names
+#: no bank anywhere in its text. Without this the row reads "Unknown bank",
+#: which is a claim about the user's bank rather than about our parser.
+_IFSC = re.compile(r"\b([a-z]{4})0[a-z0-9]{6}\b", re.IGNORECASE)
+
+#: Bank by IFSC prefix. Not exhaustive and not meant to be — an unlisted code
+#: returns None and the caller falls back, which is the same outcome as
+#: before this existed. Public sector, private, small finance, payments,
+#: foreign and the larger co-operatives, since a statement can come from any
+#: of them.
+_IFSC_BANKS: dict[str, str] = {
+    "ABHY": "Abhyudaya Co-operative Bank",
+    "AIRP": "Airtel Payments Bank",
+    "AUBL": "AU Small Finance Bank",
+    "BARB": "Bank of Baroda",
+    "BDBL": "Bandhan Bank",
+    "BKID": "Bank of India",
+    "CBIN": "Central Bank of India",
+    "CITI": "Citibank",
+    "CIUB": "City Union Bank",
+    "CNRB": "Canara Bank",
+    "COSB": "Cosmos Bank",
+    "CSBK": "CSB Bank",
+    "DBSS": "DBS Bank India",
+    "DCBL": "DCB Bank",
+    "DEUT": "Deutsche Bank",
+    "DLXB": "Dhanlaxmi Bank",
+    "ESFB": "Equitas Small Finance Bank",
+    "FDRL": "Federal Bank",
+    "FINO": "Fino Payments Bank",
+    "HDFC": "HDFC Bank",
+    "HSBC": "HSBC",
+    "ICIC": "ICICI Bank",
+    "IDFB": "IDFC FIRST Bank",
+    "IDIB": "Indian Bank",
+    "INDB": "IndusInd Bank",
+    "IOBA": "Indian Overseas Bank",
+    "IPOS": "India Post Payments Bank",
+    "JAKA": "Jammu & Kashmir Bank",
+    "JSFB": "Jana Small Finance Bank",
+    "KARB": "Karnataka Bank",
+    "KKBK": "Kotak Mahindra Bank",
+    "KVBL": "Karur Vysya Bank",
+    "MAHB": "Bank of Maharashtra",
+    "NKGS": "NKGSB Co-operative Bank",
+    "PSIB": "Punjab & Sind Bank",
+    "PUNB": "Punjab National Bank",
+    "PYTM": "Paytm Payments Bank",
+    "RATN": "RBL Bank",
+    "SBIN": "State Bank of India",
+    "SBMB": "SBM Bank India",
+    "SCBL": "Standard Chartered Bank",
+    "SIBL": "South Indian Bank",
+    "SRCB": "Saraswat Co-operative Bank",
+    "SURY": "Suryoday Small Finance Bank",
+    "SVCB": "SVC Co-operative Bank",
+    "TMBL": "Tamilnad Mercantile Bank",
+    "UBIN": "Union Bank of India",
+    "UCBA": "UCO Bank",
+    "UJVN": "Ujjivan Small Finance Bank",
+    "UTIB": "Axis Bank",
+    "YESB": "YES Bank",
+}
+
 #: Phrases that only a card statement prints. A savings statement has a
 #: closing balance; a card has an amount due and a limit.
 _CARD_MARKS: tuple[str, ...] = (
@@ -147,6 +219,10 @@ class AccountHint:
     account_type: AccountType
     #: Last four digits, or None when the page prints no account number.
     masked_number: str | None
+    #: The bank's name as the IFSC gives it, for the banks the enum above has
+    #: no member for. None when the header prints no IFSC we recognise, and
+    #: the enum's own label is then all there is.
+    institution_name: str | None = None
 
     @property
     def identified(self) -> bool:
@@ -183,6 +259,21 @@ def detect_institution(text: str) -> Institution:
         if score > best_score:
             best, best_score = institution, score
     return best
+
+
+def detect_institution_name(lines: Sequence[str]) -> str | None:
+    """The bank's name, read from the IFSC printed in the header.
+
+    Over the header only, and for the same reason `detect_masked_number`
+    stays out of the table: a narration names other people's banks, and
+    "UPI/BINDU WINE/XX3657@okbizax/UPI/AXIS BANK/…" would make every
+    statement an Axis statement.
+
+    The first code wins. A header carries one IFSC — the account's own —
+    where it carries one of anything.
+    """
+    found = _IFSC.search("\n".join(lines))
+    return _IFSC_BANKS.get(found.group(1).upper()) if found else None
 
 
 def detect_account_type(text: str) -> AccountType | None:
@@ -313,4 +404,5 @@ def detect_account(
         institution=institution,
         account_type=detect_account_type(text) or fallback_type,
         masked_number=detect_masked_number(header),
+        institution_name=detect_institution_name(header),
     )

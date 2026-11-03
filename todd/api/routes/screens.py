@@ -14,13 +14,22 @@ from dataclasses import dataclass
 from typing import Literal
 
 from fastapi import APIRouter, Query
-from sqlalchemy import text
+from sqlalchemy import RowMapping, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from todd.api.deps import SessionDep, SettingsDep, UserIdDep
 from todd.api.errors import ApiError
-from todd.db.seed.data import UNCATEGORIZED_NAME, UNCATEGORIZED_SLUG
+from todd.db.seed.data import (
+    REFUNDS_NAME,
+    REFUNDS_SLUG,
+    UNCATEGORIZED_NAME,
+    UNCATEGORIZED_SLUG,
+    category_icon,
+)
 from todd.log import get_logger
 from todd.parsers.dates import (
+    MONTH_ABBR,
+    full_date,
     gap_label,
     last_complete_months,
     month_bounds,
@@ -51,7 +60,10 @@ from todd.schemas.api.models import (
     ReportResponse,
     ReportTotals,
     ReportWindow,
+    TransactionDetailResponse,
     TransactionOut,
+    TransactionStatementSource,
+    UpdateTransactionRequest,
 )
 from todd.schemas.enums import (
     INSTITUTION_LABELS,
@@ -62,11 +74,6 @@ from todd.schemas.enums import (
     Institution,
     Plan,
 )
-
-#: The "Came in" breakdown folds every merchant credit into one line —
-#: a refund is not income from the category it came back out of.
-REFUNDS_SLUG = "refunds"
-REFUNDS_NAME = "Refunds"
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/v1", tags=["screens"])
@@ -111,41 +118,94 @@ def institution_label(value: str | None) -> str:
         return INSTITUTION_LABELS[Institution.UNKNOWN]
 
 
-def short_institution(value: str | None) -> str:
+def short_institution(value: str | None, name: str | None = None) -> str:
     """What an account row calls the bank: "HDFC", not "HDFC Bank".
 
     The row is the bank's name, the account type and the last four digits on
     one line of a phone. "ICICI Bank Credit Card ··1008" wraps onto two and
     pushes the action button out of reach; "ICICI Credit Card ··1008" does
     not, and says the same thing.
+
+    `name` is what the statement's IFSC resolved to, and it wins: the enum
+    has six members, and for every other bank it can only say `unknown`.
+
+    With neither, the empty string — not "Unknown bank". The row then reads
+    "Savings ··1421", which is everything we actually know. Naming the bank
+    "Unknown" states something about the user's bank; saying nothing states
+    something about our parser, and only one of those is true.
     """
+    if name:
+        return name
     try:
-        return _INSTITUTION_SHORT[Institution(value or "unknown")]
-    except (ValueError, KeyError):
-        return _INSTITUTION_SHORT[Institution.UNKNOWN]
-
-
-def _short_label(institution: str | None, account_type: str) -> str:
-    try:
-        name = _INSTITUTION_SHORT[Institution(institution or "unknown")]
+        institution = Institution(value or "unknown")
     except ValueError:
-        name = _INSTITUTION_SHORT[Institution.UNKNOWN]
+        institution = Institution.UNKNOWN
+    return "" if institution is Institution.UNKNOWN else _INSTITUTION_SHORT[institution]
+
+
+def _short_label(institution: str | None, account_type: str, name: str | None = None) -> str:
+    bank = short_institution(institution, name)
     try:
         kind = _TYPE_SHORT[AccountType(account_type)]
     except ValueError:
         kind = "account"
-    return f"{name} {kind}"
+    # Joined on the non-empty parts: an unnamed bank must not leave a
+    # doubled space, or a leading one, in the middle of a sentence.
+    return " ".join(part for part in (bank, kind) if part)
 
 
 def _locked_label(institution: str | None, pending: int) -> str:
     """Label for statements locked before we know whose account they are.
 
     Without an institution there is nothing truthful to name, so it says what
-    the user can act on instead of inventing a bank.
+    the user can act on instead of inventing a bank. This is the dialog's
+    heading only — the banner's sentence is `_locked_message`, because "locked"
+    is a fine word for a heading and a useless one in "Your ___ statements
+    need a password".
     """
     if institution and institution != Institution.UNKNOWN.value:
         return _INSTITUTION_SHORT[Institution(institution)]
     return "locked" if pending == 1 else f"{pending} locked"
+
+
+def _added_when(added_on: dt.date | None, today: dt.date) -> str:
+    """ "today", "yesterday", or "on 28 Oct"."""
+    if added_on is None:
+        return "you added"
+    if added_on == today:
+        return "you added today"
+    if added_on == today - dt.timedelta(days=1):
+        return "you added yesterday"
+    return f"you added on {added_on.day} {MONTH_ABBR[added_on.month - 1]}"
+
+
+def _locked_message(
+    institution: str | None,
+    account_type: str | None,
+    pending: int,
+    added_on: dt.date | None,
+    today: dt.date,
+    institution_name: str | None = None,
+) -> str:
+    """The banner's sentence.
+
+    A locked PDF is a sealed envelope: the bank, the account and the period
+    are all inside it, so for an upload there is nothing to name. What the
+    user does remember is putting the files there, which is why the sentence
+    leans on when they were added rather than on anything we claim to have
+    read out of them.
+
+    Once a document belongs to an account we have opened one of its
+    statements before, so the bank can be named and is the better handle.
+    """
+    if account_type:
+        label = _short_label(institution, account_type, institution_name)
+        return f"Your {label} statements need a password"
+    bank = short_institution(institution, institution_name)
+    if bank:
+        return f"Your {bank} statements need a password"
+    noun, verb = ("statement", "is") if pending == 1 else ("statements", "are")
+    return f"{pending} {noun} {_added_when(added_on, today)} {verb} password-protected"
 
 
 def _trend_pct(current: int, previous: int) -> float | None:
@@ -187,6 +247,7 @@ async def get_profile(
                 SELECT a.id,
                        a.institution::text AS institution,
                        a.type::text        AS type,
+                       a.institution_name,
                        a.masked_number,
                        EXISTS (
                          SELECT 1 FROM documents d
@@ -226,7 +287,7 @@ async def get_profile(
         accounts.append(
             ProfileAccount(
                 id=str(row["id"]),
-                institution=short_institution(row["institution"]),
+                institution=short_institution(row["institution"], row["institution_name"]),
                 type=AccountType(row["type"]),
                 masked_number=row["masked_number"],
                 status=status,
@@ -550,6 +611,7 @@ async def get_report(
         CategoryTotal(
             slug=r["category_slug"] or UNCATEGORIZED_SLUG,
             name=r["category_name"] or UNCATEGORIZED_NAME,
+            icon=category_icon(r["category_slug"] or UNCATEGORIZED_SLUG),
             total_paise=int(r["amount_paise"]),
             trend_pct=(
                 _trend_pct(int(r["amount_paise"]), int(r["previous_paise"] or 0))
@@ -630,13 +692,20 @@ async def get_report(
             IncomeSource(
                 slug=row["slug"] or "income_other",
                 name=row["name"] or "Other income",
+                icon=category_icon(row["slug"] or "income_other"),
                 total_paise=int(row["total"]),
                 trend_pct=None,
             )
         )
     if refunds:
         income_sources.append(
-            IncomeSource(slug="refunds", name="Refunds", total_paise=refunds, trend_pct=None)
+            IncomeSource(
+                slug=REFUNDS_SLUG,
+                name=REFUNDS_NAME,
+                icon=category_icon(REFUNDS_SLUG),
+                total_paise=refunds,
+                trend_pct=None,
+            )
         )
     income_sources.sort(key=lambda source: source.total_paise, reverse=True)
 
@@ -644,9 +713,17 @@ async def get_report(
         LockedAccount(
             id=str(r["id"]),
             label=(
-                _short_label(r["institution"], r["type"])
+                _short_label(r["institution"], r["type"], r["institution_name"])
                 if r["type"]
                 else _locked_label(r["institution"], int(r["pending"]))
+            ),
+            message=_locked_message(
+                r["institution"],
+                r["type"],
+                int(r["pending"]),
+                r["added_on"],
+                today_ist(),
+                r["institution_name"],
             ),
         )
         for r in (
@@ -656,18 +733,32 @@ async def get_report(
                     SELECT a.id,
                            a.institution::text AS institution,
                            a.type::text        AS type,
-                           1                   AS pending
+                           a.institution_name,
+                           1                   AS pending,
+                           NULL::date          AS added_on
                     FROM accounts a
                     WHERE EXISTS (SELECT 1 FROM documents d
                                   WHERE d.account_id = a.id AND d.status = 'locked')
                     UNION ALL
-                    SELECT DISTINCT ON (d.institution)
+                    -- One row per day's upload, not per bank. A sealed file
+                    -- rarely names its bank, so grouping on the institution
+                    -- put every unreadable statement in one "unknown" pile;
+                    -- grouping on the day the user added them is the thing
+                    -- the sentence is about, and keeps every count true.
+                    SELECT DISTINCT ON (added_on)
                            d.id,
                            d.institution::text AS institution,
                            NULL                AS type,
-                           count(*) OVER (PARTITION BY d.institution) AS pending
-                    FROM documents d
+                           NULL                AS institution_name,
+                           count(*) OVER (PARTITION BY added_on) AS pending,
+                           added_on
+                    FROM (
+                        SELECT *,
+                               (created_at AT TIME ZONE 'Asia/Kolkata')::date AS added_on
+                        FROM documents
+                    ) d
                     WHERE d.status = 'locked' AND d.account_id IS NULL
+                    ORDER BY added_on DESC
                     """
                 )
             )
@@ -748,6 +839,70 @@ async def get_report(
 
 
 # ---------------------------------------------- category drill-down (new)
+
+
+#: Every column `_transaction_out` reads. One list, so the drill-down and the
+#: detail screen cannot select different things and then disagree about the
+#: same row.
+TRANSACTION_COLUMNS = """
+    t.id, t.txn_date, t.amount_paise, t.direction::text AS direction,
+    t.raw_description, t.counterparty_name, t.counterparty_vpa, t.ref_no,
+    t.category_source, t.category_confidence, t.is_transfer, t.note,
+    m.normalized_name AS merchant_name,
+    c.slug AS category_slug, c.name AS category_name,
+    a.institution::text AS institution, a.type::text AS account_type,
+    a.institution_name,
+    a.masked_number
+"""
+
+
+def _future_rule_label(row: RowMapping) -> str | None:
+    """What "do this for future … payments too" would actually match on.
+
+    It has to name the same thing `file_transaction` writes a rule for — the
+    UPI address, or the payee pulled out of the narration. Naming the rail
+    instead ("future UPI payments") promises to file half the ledger under
+    one category, which is not what the tick does.
+    """
+    return (
+        row["counterparty_vpa"]
+        or row["counterparty_name"]
+        or row["merchant_name"]
+        or extract_payee(row["raw_description"])
+    )
+
+
+def _transaction_out(row: RowMapping) -> TransactionOut:
+    """One ledger row, as every screen that lists transactions shows it."""
+    return TransactionOut(
+        id=str(row["id"]),
+        txn_date=row["txn_date"].isoformat(),
+        amount_paise=int(row["amount_paise"]),
+        direction=Direction(row["direction"]),
+        raw_description=row["raw_description"],
+        title=row_title(
+            description=row["raw_description"],
+            merchant_name=row["merchant_name"],
+            counterparty_name=row["counterparty_name"],
+            counterparty_vpa=row["counterparty_vpa"],
+        ),
+        rail=extract_rail(row["raw_description"]),
+        account_masked=row["masked_number"],
+        merchant_name=row["merchant_name"],
+        counterparty_name=row["counterparty_name"],
+        counterparty_vpa=row["counterparty_vpa"],
+        category_slug=row["category_slug"] or UNCATEGORIZED_SLUG,
+        category_name=row["category_name"] or UNCATEGORIZED_NAME,
+        category_source=row["category_source"],
+        category_confidence=(
+            float(row["category_confidence"]) if row["category_confidence"] is not None else None
+        ),
+        is_transfer=row["is_transfer"],
+        account_label=_short_label(
+            row["institution"], row["account_type"] or "", row["institution_name"]
+        ),
+        future_rule_label=_future_rule_label(row),
+    )
 
 
 #: Not a Node route. The web app has no screen for this yet, so it is additive
@@ -856,14 +1011,7 @@ async def category_transactions(
         (
             await session.execute(
                 text(
-                    "SELECT t.id, t.txn_date, t.amount_paise, t.direction::text AS direction, "
-                    "       t.raw_description, t.counterparty_name, t.counterparty_vpa, "
-                    "       t.category_source, t.category_confidence, t.is_transfer, "
-                    "       m.normalized_name AS merchant_name, "
-                    "       c.slug AS category_slug, c.name AS category_name, "
-                    "       a.institution::text AS institution, a.type::text AS account_type, "
-                    "       a.masked_number "
-                    f"{base} "
+                    f"SELECT {TRANSACTION_COLUMNS} {base} "
                     "ORDER BY t.txn_date DESC, t.amount_paise DESC "
                     "LIMIT :limit OFFSET :offset"
                 ),
@@ -877,40 +1025,11 @@ async def category_transactions(
     return CategoryTransactionsResponse(
         slug=slug,
         name=name,
+        icon=category_icon(slug),
         window=window,
         total_paise=int(summary["total"]),
         count=int(summary["n"]),
-        transactions=[
-            TransactionOut(
-                id=str(r["id"]),
-                txn_date=r["txn_date"].isoformat(),
-                amount_paise=int(r["amount_paise"]),
-                direction=Direction(r["direction"]),
-                raw_description=r["raw_description"],
-                title=row_title(
-                    description=r["raw_description"],
-                    merchant_name=r["merchant_name"],
-                    counterparty_name=r["counterparty_name"],
-                    counterparty_vpa=r["counterparty_vpa"],
-                ),
-                rail=extract_rail(r["raw_description"]),
-                account_masked=r["masked_number"],
-                merchant_name=r["merchant_name"],
-                counterparty_name=r["counterparty_name"],
-                counterparty_vpa=r["counterparty_vpa"],
-                category_slug=r["category_slug"] or UNCATEGORIZED_SLUG,
-                category_name=r["category_name"] or UNCATEGORIZED_NAME,
-                category_source=r["category_source"],
-                category_confidence=(
-                    float(r["category_confidence"])
-                    if r["category_confidence"] is not None
-                    else None
-                ),
-                is_transfer=r["is_transfer"],
-                account_label=_short_label(r["institution"], r["account_type"] or ""),
-            )
-            for r in rows
-        ],
+        transactions=[_transaction_out(r) for r in rows],
     )
 
 
@@ -934,7 +1053,12 @@ async def list_categories(session: SessionDep, user_id: UserIdDep) -> Categories
     )
     return CategoriesResponse(
         categories=[
-            CategoryOption(slug=r["slug"], name=r["name"], kind=CategoryKind(r["kind"]))
+            CategoryOption(
+                slug=r["slug"],
+                name=r["name"],
+                kind=CategoryKind(r["kind"]),
+                icon=category_icon(r["slug"]),
+            )
             for r in rows
         ]
     )
@@ -1070,3 +1194,205 @@ async def file_transaction(
         category_name=category["name"],
         affected=affected,
     )
+
+
+# ------------------------------------------------ one transaction, in full
+
+
+#: What the account type is called when it sits beside the bank's name on the
+#: Details table: "ICICI Card ··9012".
+_TYPE_DETAIL: dict[AccountType, str] = {
+    AccountType.SAVINGS: "Bank",
+    AccountType.CREDIT_CARD: "Card",
+    AccountType.LOAN: "Loan",
+}
+
+#: Why the row is filed where it is, per rung of the ladder (§9). Shown under
+#: the category name: a label with no reason behind it is one the user has no
+#: way to argue with, and arguing with it is the whole point of the screen.
+_CATEGORY_NOTES: dict[str, str] = {
+    "user_rule": "You filed this one",
+    "own_transfer_pair": "Matched to a move between your own accounts",
+    "bank_charge": "The bank's own charge",
+    "structural": "Read from the way the bank described it",
+    "mandate": "A standing mandate — an EMI, a SIP or a premium",
+    "merchant_dict": "We recognised the merchant",
+    "vpa_person": "A person's UPI address, not a shop",
+    "vpa_business": "A business UPI handle, but not what it sells",
+    "payee_trigram": "Same payee as one you filed before",
+    "payee_classify": "Our best guess",
+    "llm": "Our best guess",
+    "llm_unknown": "We weren't sure about this one",
+    "unmatched": "We weren't sure about this one",
+}
+
+_UNSURE = "We weren't sure about this one"
+
+
+def _account_line(
+    institution: str | None,
+    account_type: str | None,
+    masked: str | None,
+    institution_name: str | None = None,
+) -> str:
+    """ "ICICI Card ··9012" — the Details row for the account.
+
+    Last 4 only, and the dots are part of the string rather than left to the
+    client to prepend: a client that forgets them prints what looks like a
+    whole account number (§12).
+    """
+    name = short_institution(institution, institution_name)
+    try:
+        kind = _TYPE_DETAIL[AccountType(account_type or "")]
+    except ValueError:
+        kind = "Account"
+    head = " ".join(part for part in (name, kind) if part)
+    return f"{head} ··{masked}" if masked else head
+
+
+def _method_label(account_type: str | None, rail: str | None) -> str:
+    """How the money moved: "Card · POS", "UPI", "Card".
+
+    The instrument is only named for a card, because that is the case where
+    the rail alone misleads — a POS on a credit card and a POS on a debit
+    card are the same rail and different money.
+    """
+    if account_type == AccountType.CREDIT_CARD.value:
+        return f"Card · {rail}" if rail else "Card"
+    return rail or "Payment"
+
+
+def _category_note(source: str | None, merchant_name: str | None) -> str:
+    """One line saying which rung decided this, in words rather than a slug."""
+    if source == "merchant_dict" and merchant_name:
+        return f"We recognised {merchant_name}"
+    return _CATEGORY_NOTES.get(source or "", _UNSURE)
+
+
+async def _load_detail(session: AsyncSession, txn_id: uuid.UUID) -> TransactionDetailResponse:
+    """Assemble the detail screen for one row, or 404.
+
+    Reads `v_publishable_transactions` like every other read, so a row from a
+    statement that failed the reconciliation gate is not reachable here
+    either — it is not in the ledger the user is looking at (§5, §7.3).
+    """
+    row = (
+        (
+            await session.execute(
+                text(
+                    f"SELECT {TRANSACTION_COLUMNS}, "
+                    "       d.id AS document_id, d.filename, "
+                    "       s.id AS statement_id, s.period_start, s.period_end "
+                    "FROM v_publishable_transactions t "
+                    "LEFT JOIN categories c ON c.id = t.category_id "
+                    "LEFT JOIN merchants  m ON m.id = t.merchant_id "
+                    "LEFT JOIN accounts   a ON a.id = t.account_id "
+                    "LEFT JOIN statements s ON s.id = t.statement_id "
+                    "LEFT JOIN documents  d ON d.id = s.document_id "
+                    "WHERE t.id = :id"
+                ),
+                {"id": txn_id},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        raise ApiError(404, "not_found", "No such transaction.")
+
+    transaction = _transaction_out(row)
+
+    # A statement the user can be pointed back to. An alert row has none, and
+    # the card is left off rather than filled with "unknown".
+    statement: TransactionStatementSource | None = None
+    if row["filename"] and row["period_start"] and row["period_end"]:
+        statement = TransactionStatementSource(
+            document_id=str(row["document_id"]) if row["document_id"] else None,
+            statement_id=str(row["statement_id"]) if row["statement_id"] else None,
+            filename=row["filename"],
+            period_label=f"Statement for {range_label(row['period_start'], row['period_end'])}",
+        )
+
+    return TransactionDetailResponse(
+        transaction=transaction,
+        date_label=full_date(row["txn_date"]),
+        account_line=_account_line(
+            row["institution"],
+            row["account_type"],
+            row["masked_number"],
+            row["institution_name"],
+        ),
+        method_label=_method_label(row["account_type"], transaction.rail),
+        ref_no=row["ref_no"],
+        type_label="Credit" if transaction.direction is Direction.CREDIT else "Debit",
+        category_icon=category_icon(transaction.category_slug),
+        category_note=_category_note(row["category_source"], row["merchant_name"]),
+        note=row["note"],
+        statement=statement,
+    )
+
+
+def _transaction_id(value: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(value)
+    except ValueError as exc:
+        raise ApiError(400, "bad_request", "That is not a transaction id.") from exc
+
+
+@router.get(
+    "/transactions/{transaction_id}",
+    response_model=TransactionDetailResponse,
+    summary="One transaction, in full",
+)
+async def get_transaction(
+    transaction_id: str,
+    session: SessionDep,
+    user_id: UserIdDep,
+) -> TransactionDetailResponse:
+    """The detail screen: the row, where it came from, and why it is filed there."""
+    return await _load_detail(session, _transaction_id(transaction_id))
+
+
+@router.patch(
+    "/transactions/{transaction_id}",
+    response_model=TransactionDetailResponse,
+    summary="Add a note, or mark a transaction as not a spend",
+)
+async def update_transaction(
+    transaction_id: str,
+    body: UpdateTransactionRequest,
+    session: SessionDep,
+    user_id: UserIdDep,
+) -> TransactionDetailResponse:
+    """The two buttons at the foot of the detail screen.
+
+    "Not a spend" sets `isTransfer`, which is what the report already excludes
+    — paying your own card from savings is not spending. It is deliberately
+    not a delete: the row stays in the ledger, because a statement that
+    reconciles must keep reconciling after the user touches a screen.
+
+    A field left out of the body is left alone. `note: null` clears it.
+    """
+    txn_id = _transaction_id(transaction_id)
+    sent = body.model_fields_set
+
+    updates: dict[str, object] = {}
+    if "note" in sent:
+        note = (body.note or "").strip()
+        updates["note"] = note or None
+    if "is_transfer" in sent and body.is_transfer is not None:
+        updates["is_transfer"] = body.is_transfer
+
+    if updates:
+        assignments = ", ".join(f"{column} = :{column}" for column in updates)
+        result = await session.execute(
+            text(f"UPDATE transactions SET {assignments}, updated_at = now() WHERE id = :id"),
+            {**updates, "id": txn_id},
+        )
+        # No commit: `scoped_session` holds the transaction open and commits
+        # on a clean return. Committing here closes it under the read below.
+        if not getattr(result, "rowcount", 0):
+            raise ApiError(404, "not_found", "No such transaction.")
+        logger.info("transaction_updated", fields=sorted(updates))
+
+    return await _load_detail(session, txn_id)

@@ -63,6 +63,17 @@ def month_name(key: str) -> str:
     return MONTH_NAME[int(key.split("-")[1]) - 1]
 
 
+def full_date(value: dt.date) -> str:
+    """ "18 September 2026" — the long form, for a screen about one row.
+
+    Day-first and spelled out. A list shortens to "18 Sep" because it has
+    forty of them; the detail screen has one date on it and no reason to
+    abbreviate, and the year matters there: a statement read in January is
+    full of last year.
+    """
+    return f"{value.day} {MONTH_NAME[value.month - 1]} {value.year}"
+
+
 def preceding_months(month_keys: list[str]) -> list[str]:
     """The window of the same length immediately before `month_keys`.
 

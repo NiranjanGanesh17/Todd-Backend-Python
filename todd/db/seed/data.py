@@ -24,6 +24,9 @@ class SeedCategory:
     name: str
     kind: CategoryKind
     sort_order: int
+    #: A [lucide](https://lucide.dev) icon name, kebab-case, as the web app
+    #: imports it. Not a column: see `category_icon` below.
+    icon: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,26 +43,60 @@ UNCATEGORIZED_SLUG = "uncategorized"
 UNCATEGORIZED_NAME = "Uncategorized"
 
 SEED_CATEGORIES: tuple[SeedCategory, ...] = (
-    SeedCategory("rent_housing", "Rent & housing", CategoryKind.SPEND, 10),
-    SeedCategory("groceries", "Groceries", CategoryKind.SPEND, 20),
-    SeedCategory("food_delivery", "Food delivery", CategoryKind.SPEND, 30),
-    SeedCategory("dining_out", "Dining out", CategoryKind.SPEND, 40),
-    SeedCategory("shopping", "Shopping", CategoryKind.SPEND, 50),
-    SeedCategory("travel_fuel", "Travel & fuel", CategoryKind.SPEND, 60),
-    SeedCategory("utilities_bills", "Utilities & bills", CategoryKind.SPEND, 70),
-    SeedCategory("subscriptions", "Subscriptions", CategoryKind.SPEND, 80),
-    SeedCategory("emis_loans", "EMIs & loans", CategoryKind.SPEND, 90),
-    SeedCategory("investments_sip", "Investments (SIP)", CategoryKind.SPEND, 100),
-    SeedCategory("insurance", "Insurance", CategoryKind.SPEND, 110),
-    SeedCategory("health", "Health", CategoryKind.SPEND, 120),
-    SeedCategory("education", "Education", CategoryKind.SPEND, 130),
-    SeedCategory("bank_charges", "Bank charges", CategoryKind.SPEND, 140),
-    SeedCategory("cash_withdrawal", "Cash withdrawal", CategoryKind.SPEND, 150),
-    SeedCategory("upi_to_people", "UPI to people", CategoryKind.SPEND, 160),
-    SeedCategory("transfers_own", "Transfers (own accounts)", CategoryKind.TRANSFER, 170),
-    SeedCategory("income_salary", "Income: salary", CategoryKind.INCOME, 180),
-    SeedCategory("income_other", "Income: other", CategoryKind.INCOME, 190),
+    SeedCategory("rent_housing", "Rent & housing", CategoryKind.SPEND, 10, "house"),
+    SeedCategory("groceries", "Groceries", CategoryKind.SPEND, 20, "shopping-basket"),
+    SeedCategory("food_delivery", "Food delivery", CategoryKind.SPEND, 30, "utensils"),
+    SeedCategory("dining_out", "Dining out", CategoryKind.SPEND, 40, "utensils-crossed"),
+    SeedCategory("shopping", "Shopping", CategoryKind.SPEND, 50, "shopping-bag"),
+    SeedCategory("travel_fuel", "Travel & fuel", CategoryKind.SPEND, 60, "fuel"),
+    SeedCategory("utilities_bills", "Utilities & bills", CategoryKind.SPEND, 70, "zap"),
+    SeedCategory("subscriptions", "Subscriptions", CategoryKind.SPEND, 80, "repeat"),
+    SeedCategory("emis_loans", "EMIs & loans", CategoryKind.SPEND, 90, "landmark"),
+    SeedCategory("investments_sip", "Investments (SIP)", CategoryKind.SPEND, 100, "trending-up"),
+    SeedCategory("insurance", "Insurance", CategoryKind.SPEND, 110, "shield-check"),
+    SeedCategory("health", "Health", CategoryKind.SPEND, 120, "heart-pulse"),
+    SeedCategory("education", "Education", CategoryKind.SPEND, 130, "graduation-cap"),
+    SeedCategory("bank_charges", "Bank charges", CategoryKind.SPEND, 140, "receipt"),
+    SeedCategory("cash_withdrawal", "Cash withdrawal", CategoryKind.SPEND, 150, "banknote"),
+    SeedCategory("upi_to_people", "UPI to people", CategoryKind.SPEND, 160, "users"),
+    SeedCategory(
+        "transfers_own",
+        "Transfers (own accounts)",
+        CategoryKind.TRANSFER,
+        170,
+        "arrow-left-right",
+    ),
+    SeedCategory("income_salary", "Income: salary", CategoryKind.INCOME, 180, "wallet"),
+    SeedCategory("income_other", "Income: other", CategoryKind.INCOME, 190, "hand-coins"),
 )
+
+#: The slug the report folds merchant credits into: a refund is not income
+#: from the category the money went out of. Synthetic, like `uncategorized`.
+REFUNDS_SLUG = "refunds"
+REFUNDS_NAME = "Refunds"
+
+#: Anything the icon map does not name. A generic label, never a guess at
+#: what a category the server has never heard of is about.
+FALLBACK_ICON = "tag"
+
+#: slug -> lucide icon, including the two buckets that are not rows in
+#: `categories`. Kept in code rather than as a column because it is how a
+#: category is *drawn*, not what it is: changing an icon should be a deploy,
+#: not a data migration, and the API writes it into every response so the two
+#: clients cannot draw the same category differently (§6).
+CATEGORY_ICONS: dict[str, str] = {
+    **{category.slug: category.icon for category in SEED_CATEGORIES},
+    # Grey question mark, and it stays reserved: "we could not place this"
+    # must not look like a decision somebody made.
+    UNCATEGORIZED_SLUG: "circle-help",
+    REFUNDS_SLUG: "rotate-ccw",
+}
+
+
+def category_icon(slug: str | None) -> str:
+    """The icon for a category, or the fallback tag for one we do not know."""
+    return CATEGORY_ICONS.get(slug or "", FALLBACK_ICON)
+
 
 SEED_MERCHANTS: tuple[SeedMerchant, ...] = (
     # food delivery

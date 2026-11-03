@@ -83,6 +83,10 @@
       "CategoryOption": {
         "description": "A category a transaction can be filed under.",
         "properties": {
+          "icon": {
+            "title": "Icon",
+            "type": "string"
+          },
           "kind": {
             "$ref": "#/components/schemas/CategoryKind"
           },
@@ -98,13 +102,18 @@
         "required": [
           "slug",
           "name",
-          "kind"
+          "kind",
+          "icon"
         ],
         "title": "CategoryOption",
         "type": "object"
       },
       "CategoryTotal": {
         "properties": {
+          "icon": {
+            "title": "Icon",
+            "type": "string"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -137,6 +146,7 @@
         "required": [
           "slug",
           "name",
+          "icon",
           "totalPaise",
           "trendPct"
         ],
@@ -148,6 +158,10 @@
           "count": {
             "title": "Count",
             "type": "integer"
+          },
+          "icon": {
+            "title": "Icon",
+            "type": "string"
           },
           "name": {
             "title": "Name",
@@ -175,6 +189,7 @@
         "required": [
           "slug",
           "name",
+          "icon",
           "window",
           "totalPaise",
           "count",
@@ -764,6 +779,10 @@
       "IncomeSource": {
         "description": "One source of money arriving, for the \"Came in\" breakdown.\n\nSame shape as a spend category, because it is one \u2014 the credit side of\nthe same ledger, filtered the other way.",
         "properties": {
+          "icon": {
+            "title": "Icon",
+            "type": "string"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -791,6 +810,7 @@
         "required": [
           "slug",
           "name",
+          "icon",
           "totalPaise",
           "trendPct"
         ],
@@ -865,11 +885,16 @@
           "label": {
             "title": "Label",
             "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
           }
         },
         "required": [
           "id",
-          "label"
+          "label",
+          "message"
         ],
         "title": "LockedAccount",
         "type": "object"
@@ -1209,6 +1234,84 @@
         "title": "ReportWindow",
         "type": "object"
       },
+      "TransactionDetailResponse": {
+        "description": "Everything the one-transaction screen prints.\n\n`transaction` is the same row the category list renders, so the screen it\nwas opened from and the screen it opens onto cannot disagree. The rest is\ndetail that only this screen has room for, written here rather than in\nthe client (\u00a76).",
+        "properties": {
+          "accountLine": {
+            "title": "Accountline",
+            "type": "string"
+          },
+          "categoryIcon": {
+            "title": "Categoryicon",
+            "type": "string"
+          },
+          "categoryNote": {
+            "title": "Categorynote",
+            "type": "string"
+          },
+          "dateLabel": {
+            "title": "Datelabel",
+            "type": "string"
+          },
+          "methodLabel": {
+            "title": "Methodlabel",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "refNo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refno"
+          },
+          "statement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TransactionStatementSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "transaction": {
+            "$ref": "#/components/schemas/TransactionOut"
+          },
+          "typeLabel": {
+            "title": "Typelabel",
+            "type": "string"
+          }
+        },
+        "required": [
+          "transaction",
+          "dateLabel",
+          "accountLine",
+          "methodLabel",
+          "refNo",
+          "typeLabel",
+          "categoryIcon",
+          "categoryNote",
+          "note",
+          "statement"
+        ],
+        "title": "TransactionDetailResponse",
+        "type": "object"
+      },
       "TransactionOut": {
         "description": "One ledger row, as a category drill-down shows it.\n\n`merchantName` or `counterpartyName` is what a person reads;\n`rawDescription` is kept so they can see what the bank actually printed\nwhen a label looks wrong.",
         "properties": {
@@ -1300,6 +1403,17 @@
           "direction": {
             "$ref": "#/components/schemas/Direction"
           },
+          "futureRuleLabel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Futurerulelabel"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1360,9 +1474,53 @@
           "categorySource",
           "categoryConfidence",
           "isTransfer",
-          "accountLabel"
+          "accountLabel",
+          "futureRuleLabel"
         ],
         "title": "TransactionOut",
+        "type": "object"
+      },
+      "TransactionStatementSource": {
+        "description": "The file this row was read out of.\n\nThe detail screen's last card: \"From ICICI_Card_Sep.pdf \u2014 statement for\n19 Aug \u2013 18 Sep\". A row the user doubts is answered by showing them where\nit came from, not by asking them to trust the ledger.",
+        "properties": {
+          "documentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documentid"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "periodLabel": {
+            "title": "Periodlabel",
+            "type": "string"
+          },
+          "statementId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statementid"
+          }
+        },
+        "required": [
+          "documentId",
+          "statementId",
+          "filename",
+          "periodLabel"
+        ],
+        "title": "TransactionStatementSource",
         "type": "object"
       },
       "UnlockRequest": {
@@ -1411,6 +1569,36 @@
           "stillLocked"
         ],
         "title": "UnlockResponse",
+        "type": "object"
+      },
+      "UpdateTransactionRequest": {
+        "description": "The two buttons at the foot of the detail screen.\n\nBoth fields are optional and a field left out is left alone \u2014 `note: null`\nclears the note, no `note` key keeps it. \"Not a spend\" is\n`isTransfer: true`: the row stays in the ledger and stops counting\nagainst the report, which is what moving money between your own accounts\nactually is.",
+        "properties": {
+          "isTransfer": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Istransfer"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "title": "UpdateTransactionRequest",
         "type": "object"
       },
       "UploadProgressResponse": {
@@ -2268,6 +2456,100 @@
         "summary": "Begin consent, returns {authUrl}",
         "tags": [
           "gmail"
+        ]
+      }
+    },
+    "/v1/transactions/{transaction_id}": {
+      "get": {
+        "description": "The detail screen: the row, where it came from, and why it is filed there.",
+        "operationId": "get_transaction_v1_transactions__transaction_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transaction_id",
+            "required": true,
+            "schema": {
+              "title": "Transaction Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "One transaction, in full",
+        "tags": [
+          "screens"
+        ]
+      },
+      "patch": {
+        "description": "The two buttons at the foot of the detail screen.\n\n\"Not a spend\" sets `isTransfer`, which is what the report already excludes\n\u2014 paying your own card from savings is not spending. It is deliberately\nnot a delete: the row stays in the ledger, because a statement that\nreconciles must keep reconciling after the user touches a screen.\n\nA field left out of the body is left alone. `note: null` clears it.",
+        "operationId": "update_transaction_v1_transactions__transaction_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transaction_id",
+            "required": true,
+            "schema": {
+              "title": "Transaction Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTransactionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add a note, or mark a transaction as not a spend",
+        "tags": [
+          "screens"
         ]
       }
     },

@@ -198,6 +198,7 @@ async def resolve_account(
     institution: Institution,
     account_type: AccountType,
     masked_number: str | None,
+    institution_name: str | None = None,
     document_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
     """Find or create the account on its natural key.
@@ -227,10 +228,16 @@ async def resolve_account(
                     "  institution = CASE WHEN institution = 'unknown' THEN CAST(:inst AS "
                     "    institution) ELSE institution END, "
                     "  masked_number = COALESCE(masked_number, :masked), "
+                    "  institution_name = COALESCE(institution_name, :inst_name), "
                     "  updated_at = now() "
                     "WHERE id = :id"
                 ),
-                {"id": owned, "inst": institution.value, "masked": masked_number},
+                {
+                    "id": owned,
+                    "inst": institution.value,
+                    "masked": masked_number,
+                    "inst_name": institution_name,
+                },
             )
             return uuid.UUID(str(owned))
 
@@ -249,14 +256,16 @@ async def resolve_account(
     created = (
         await session.execute(
             text(
-                "INSERT INTO accounts (user_id, institution, type, masked_number, source) "
-                "VALUES (:uid, :inst, :type, :masked, 'detected') RETURNING id"
+                "INSERT INTO accounts "
+                "(user_id, institution, type, masked_number, institution_name, source) "
+                "VALUES (:uid, :inst, :type, :masked, :inst_name, 'detected') RETURNING id"
             ),
             {
                 "uid": uuid.UUID(user_id),
                 "inst": institution.value,
                 "type": account_type.value,
                 "masked": masked_number,
+                "inst_name": institution_name,
             },
         )
     ).scalar_one()
@@ -568,6 +577,7 @@ async def _run(
         institution=institution,
         account_type=account_type,
         masked_number=hint.masked_number,
+        institution_name=hint.institution_name,
         document_id=document_id,
     )
     statement_id = await upsert_statement(
